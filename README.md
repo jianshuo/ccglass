@@ -1,6 +1,6 @@
 # ccglass
 
-**See exactly what your coding agent sends to the model.** A zero-dependency
+**See exactly what your coding agent sends to the model.** A lightweight
 local logging reverse-proxy + web dashboard for **Claude Code, Codex,
 DeepSeek-TUI, and Kimi**.
 One command, like `ollama`:
@@ -106,7 +106,9 @@ to keep them. Treat the log directory as sensitive regardless.
 
 ## Requirements
 
-Node ≥ 18. No runtime dependencies.
+Node ≥ 18. The core proxy + dashboard have no runtime dependencies; the
+optional MCP self-inspection feature (`ccglass claude`) pulls in
+`@modelcontextprotocol/sdk` and `zod`.
 
 ## Acknowledgments
 
