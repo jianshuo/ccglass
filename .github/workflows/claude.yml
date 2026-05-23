@@ -1,84 +1,50 @@
-name: Claude
-
-# Two ways Claude helps on this repo:
-#   1. auto-fix  — every newly opened issue: Claude investigates and opens a fix PR.
-#   2. mention   — "@claude" in any issue/PR comment: Claude responds / iterates.
-# Claude only ever opens PRs; it never pushes to main, bumps the version, or
-# publishes. Merging + releasing stays a human decision.
-#
-# Auth: run `claude /install-github-app` once to install the GitHub App and store
-# the CLAUDE_CODE_OAUTH_TOKEN secret used below.
+name: Claude Code
 
 on:
-  issues:
-    types: [opened]
   issue_comment:
     types: [created]
   pull_request_review_comment:
     types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
 
 jobs:
-  # ---- auto-fix every newly opened issue → open a PR for review ----
-  auto-fix:
-    if: github.event_name == 'issues'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: |
-            A new issue was opened on the ccglass repo (a zero-dependency Node
-            logging reverse-proxy + dashboard for coding agents).
-
-            Issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
-
-            ${{ github.event.issue.body }}
-
-            Your job:
-            1. Investigate the issue against the actual code. If it's a real bug
-               or a small, well-scoped feature, fix it. If it's unclear, too
-               large, or out of scope, post a comment asking for clarification
-               instead of guessing — do NOT open a PR in that case.
-            2. Keep the change minimal and consistent with the surrounding style.
-               This package has zero runtime dependencies — do not add any.
-            3. Run `npm test` and make sure it passes before opening the PR.
-            4. Open a pull request against `main` that references this issue
-               (e.g. "Fixes #${{ github.event.issue.number }}"). Explain what you
-               changed and how you verified it.
-
-            Do NOT push to main directly. Do NOT bump the version in package.json
-            or publish to npm — releases are done by the maintainer.
-          claude_args: |
-            --max-turns 25
-            --allowedTools Edit,Read,Write,Glob,Grep,Bash
-
-  # ---- "@claude" mention in a comment → respond / iterate ----
-  mention:
+  claude:
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
+      contents: read
+      pull-requests: read
+      issues: read
       id-token: write
+      actions: read # Required for Claude to read CI results on PRs
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-      - uses: anthropics/claude-code-action@v1
+          fetch-depth: 1
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          trigger_phrase: "@claude"
-          claude_args: |
-            --max-turns 25
-            --allowedTools Edit,Read,Write,Glob,Grep,Bash
+
+          # This is an optional setting that allows Claude to read CI results on PRs
+          additional_permissions: |
+            actions: read
+
+          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
+          # prompt: 'Update the pull request description to include a summary of changes.'
+
+          # Optional: Add claude_args to customize behavior and configuration
+          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # or https://code.claude.com/docs/en/cli-reference for available options
+          # claude_args: '--allowed-tools Bash(gh pr *)'
+
