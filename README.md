@@ -90,7 +90,7 @@ ccglass export <id> --format md|json|har
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--provider <p>` | from command | Force format/env for `run` (`claude`/`codex`/`kimi`/`openai`) |
+| `--provider <p>` | from command | Force format/env for `run` (`claude`/`codex`/`deepseek`/`kimi`/`openai`) |
 | `--upstream <url>` | per provider | Override the upstream API |
 | `--port <n>` | auto | Dashboard port |
 | `--proxy-port <n>` | auto | Proxy port |
@@ -107,6 +107,20 @@ to keep them. Treat the log directory as sensitive regardless.
 ## Requirements
 
 Node ≥ 18. No runtime dependencies.
+
+## Acknowledgments
+
+Heartfelt thanks to **庄表伟 ([@zhuangbiaowei](https://github.com/zhuangbiaowei))** for
+contributing **first-class DeepSeek-TUI support** ([#1](https://github.com/jianshuo/ccglass/pull/1)).
+
+DeepSeek-TUI ships as a dual-binary coding agent — a `deepseek` dispatcher and a
+`deepseek-tui` runtime. 庄表伟 wired up both as native ccglass providers, pointing
+them at the proxy via `DEEPSEEK_BASE_URL` and reusing the existing
+OpenAI-compatible Chat Completions adapter, so every DeepSeek request now shows up
+in the dashboard with zero extra setup. The contribution also added them to the
+interactive picker, documented usage across the README, and shipped provider
+regression tests to keep it working. Thank you for making ccglass better for the
+whole DeepSeek community. 🙏
 
 ## License
 
