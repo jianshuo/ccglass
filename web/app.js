@@ -46,13 +46,16 @@ function renderList() {
     const row = el("div", { className: "row" });
     if (e.id === state.selected) row.classList.add("sel");
     if (state.picks.includes(e.id)) row.classList.add("pick");
+    const sub = el("div", { className: "sub" },
+      el("span", { className: "time", textContent: e.ts ? new Date(e.ts).toLocaleTimeString() : "" }),
+      el("span", { textContent: ` ${e.format ? e.format + " · " : ""}${e.nMessages} msg · ${e.nTools} tools · ` }),
+      el("span", { className: e.pending ? "pending" : "", textContent: e.pending ? "pending…" : "HTTP " + e.status }));
+    if (e.nToolUse) sub.append(el("span", { className: "toolcalls", title: "tool calls in this request", textContent: ` 🔧${e.nToolUse}` }));
     row.append(
       el("div", { className: "top" },
         el("span", { className: "seq", textContent: "#" + e.seq }),
         el("span", { textContent: e.model || "—" })),
-      el("div", { className: "sub" },
-        el("span", { textContent: `${e.format ? e.format + " · " : ""}${e.nMessages} msg · ${e.nTools} tools · ` }),
-        el("span", { className: e.pending ? "pending" : "", textContent: e.pending ? "pending…" : "HTTP " + e.status }))
+      sub
     );
     row.onclick = () => onPick(e.id);
     list.append(row);
@@ -79,7 +82,7 @@ async function loadDetail(id) {
   renderDetail();
 }
 
-const TABS = ["overview", "system", "messages", "tools", "response", "headers"];
+const TABS = ["overview", "flow", "system", "messages", "tools", "response", "headers"];
 
 function renderDetail() {
   const rec = state.detail;
@@ -101,6 +104,7 @@ function paneHtml(rec, tab) {
   const parsed = rec.parsed || {};
   const view = parsed.view || { system: [], messages: [], tools: [] };
   if (tab === "overview") return overviewHtml(rec, parsed, view);
+  if (tab === "flow") return flowHtml(rec);
   if (tab === "system") return blocksHtml(view.system);
   if (tab === "messages") return messagesHtml(view.messages);
   if (tab === "tools") return toolsHtml(view.tools);
@@ -126,7 +130,7 @@ function overviewHtml(rec, parsed, view) {
       ${card("cost", "$" + (c.usd || 0).toFixed(5))}
       ${card("stop", parsed.response?.stop_reason || "—")}
     </div>
-    <div>${dl("md")}${dl("json")}${dl("har")}</div>
+    <div>${dl("raw")}${dl("md")}${dl("json")}${dl("har")}</div>
     <div class="block"><div class="h">request line</div><pre>${esc(rec.request?.method)} ${esc(rec.request?.url)}</pre></div>
     <p style="color:var(--muted)">${view.system.length} system blocks · ${view.messages.length} messages · ${view.tools.length} tools</p>`;
 }
@@ -136,7 +140,7 @@ function card(k, v, sub) {
 }
 
 function blockEl(label, text, tags = "") {
-  return `<div class="block"><div class="h"><span>${esc(label)}</span><span>${tags}</span></div><pre>${esc(text)}</pre></div>`;
+  return `<div class="block"><div class="h"><span>${esc(label)}</span><span>${tags}</span></div>${preBody(text)}</div>`;
 }
 
 function blocksHtml(blocks) {
@@ -152,13 +156,15 @@ function idHue(id) {
   return h;
 }
 
-// Long bodies fold into a <details> so the history stays scannable.
+// Long bodies fold into a <details> toggle so the history stays scannable.
+// The summary reports the line count; CSS swaps "▸ show N lines" ⇄ "▾ hide"
+// as it opens/closes — a plain show/hide toggle, no JS wiring needed.
 function preBody(text) {
   const t = text || "";
-  const long = t.length > 800 || t.split("\n").length > 18;
+  const lines = t.split("\n").length;
+  const long = t.length > 800 || lines > 18;
   if (!long) return `<pre>${esc(t)}</pre>`;
-  const head = esc(t.split("\n").slice(0, 3).join("\n")).slice(0, 240);
-  return `<details><summary>${head}… <span class="more">show all (${t.length} chars)</span></summary><pre>${esc(t)}</pre></details>`;
+  return `<details class="fold"><summary><span class="more show">▸ show ${lines} lines</span><span class="more hide">▾ hide</span></summary><pre>${esc(t)}</pre></details>`;
 }
 
 function messagesHtml(messages) {
@@ -183,7 +189,8 @@ function toolsHtml(tools) {
   if (!tools.length) return `<p style="color:var(--muted)">none</p>`;
   return tools.map((t) =>
     `<div class="block"><div class="h"><span>${esc(t.name)}</span></div>` +
-    `<pre>${esc(t.description || "")}\n\n— schema —\n${esc(JSON.stringify(t.schema || {}, null, 2))}</pre></div>`
+    preBody(`${t.description || ""}\n\n— schema —\n${JSON.stringify(t.schema || {}, null, 2)}`) +
+    `</div>`
   ).join("");
 }
 
@@ -197,6 +204,93 @@ function responseHtml(r) {
   }
   if (r.error) html += blockEl("error", JSON.stringify(r.error, null, 2));
   return html;
+}
+
+// ---- flow: conversation-level sequence diagram ---------------------------
+// Reconstructs the agent loop from the parsed messages[] (the full history the
+// model was sent) plus this request's response (the model's latest decision,
+// not yet folded back into messages). Each tool_use is paired with its
+// tool_result by call_id and shares a color, so you can read: model picks a
+// tool → CLI executes it locally → result is sent back → model picks again.
+
+const FLOW_ICON = {
+  user: "▸", assistant: "✎", thinking: "✻",
+  tool_use: "⚙", skill: "🧩", tool_result: "↳", stop: "■",
+};
+
+function oneLine(t, n = 100) {
+  const s = String(t ?? "").replace(/\s+/g, " ").trim();
+  return s.length > n ? s.slice(0, n) + "…" : s;
+}
+
+// A Skill tool_use input is { skill, args } — pull the skill name out of it.
+function skillName(text) {
+  try { const o = JSON.parse(text); return o.skill || o.name || ""; } catch { return ""; }
+}
+
+function flowSteps(rec) {
+  const parsed = rec.parsed || {};
+  const steps = [];
+  for (const m of parsed.view?.messages || []) {
+    if (m.type === "tool_use") {
+      const isSkill = m.name === "Skill";
+      steps.push({ kind: isSkill ? "skill" : "tool_use", name: isSkill ? skillName(m.text) || "skill" : m.name, callId: m.callId, text: m.text });
+    } else if (m.type === "tool_result") {
+      steps.push({ kind: "tool_result", callId: m.callId, isError: m.isError, text: m.text });
+    } else if (m.type === "thinking") {
+      steps.push({ kind: "thinking", text: m.text });
+    } else {
+      steps.push({ kind: m.role === "assistant" ? "assistant" : "user", text: m.text });
+    }
+  }
+  // The reply to THIS request lives in the response, not yet in messages[].
+  const r = parsed.response;
+  if (r && Array.isArray(r.content)) {
+    for (const b of r.content) {
+      if (b.type === "tool_use") {
+        const isSkill = b.name === "Skill";
+        steps.push({ kind: isSkill ? "skill" : "tool_use", name: isSkill ? (b.input?.skill || "skill") : b.name, callId: b.id, text: JSON.stringify(b.input ?? {}, null, 2), latest: true });
+      } else if (b.type === "thinking") {
+        steps.push({ kind: "thinking", text: b.thinking ?? "", latest: true });
+      } else {
+        steps.push({ kind: "assistant", text: b.text ?? "", latest: true });
+      }
+    }
+    if (r.stop_reason) steps.push({ kind: "stop", text: r.stop_reason });
+  }
+  return steps;
+}
+
+function flowHtml(rec) {
+  const steps = flowSteps(rec);
+  if (!steps.length) return `<p style="color:var(--muted)">no messages</p>`;
+  const tools = rec.parsed?.view?.tools || [];
+  const menu = tools.length
+    ? `<details class="fold toolmenu"><summary><span class="more show">🛠 ${tools.length} tools offered to the model</span><span class="more hide">🛠 hide tool menu</span></summary><pre>${esc(tools.map((t) => t.name).join("\n"))}</pre></details>`
+    : "";
+
+  const rows = steps.map((s) => {
+    const paired = s.kind === "tool_use" || s.kind === "skill" || s.kind === "tool_result";
+    const hue = s.callId ? ` style="--hue:${idHue(s.callId)}"` : "";
+    const tags = [];
+    if (s.kind === "skill") tags.push('<span class="tag skill">skill</span>');
+    if (s.kind === "tool_result") tags.push(`<span class="tag ${s.isError ? "err" : "result"}">${s.isError ? "error" : "ok"}</span>`);
+    if (s.callId) tags.push(`<span class="tag id">${esc(String(s.callId).slice(-6))}</span>`);
+    if (s.latest) tags.push('<span class="tag latest">this turn</span>');
+    const title =
+      s.kind === "tool_use" ? `tool_use → <b>${esc(s.name || "")}</b>` :
+      s.kind === "skill" ? `Skill → <b>${esc(s.name || "")}</b>` :
+      s.kind === "tool_result" ? "tool_result ↩ executed locally" :
+      s.kind === "stop" ? `stop_reason: ${esc(s.text)}` :
+      s.kind === "thinking" ? "thinking" : s.kind;
+    const body = s.kind === "stop" ? "" :
+      `<details class="fold step-body"><summary><span class="prev">${esc(oneLine(s.text))}</span></summary><pre>${esc(s.text)}</pre></details>`;
+    return `<div class="step ${s.kind}${paired ? " indent" : ""}"${hue}>` +
+      `<span class="dot">${FLOW_ICON[s.kind] || "•"}</span>` +
+      `<div class="node"><div class="lead">${title}${tags.join("")}</div>${body}</div></div>`;
+  }).join("");
+
+  return `<div class="flow">${menu}<div class="timeline">${rows}</div></div>`;
 }
 
 // ---- diff ----------------------------------------------------------------

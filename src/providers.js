@@ -9,6 +9,7 @@ export const PROVIDERS = {
     format: "anthropic",
     envVar: "ANTHROPIC_BASE_URL",
     upstream: "https://api.anthropic.com",
+    mcp: true, // Claude Code accepts --mcp-config: auto-inject ccglass's inspection tools
   },
   codex: {
     label: "Codex (OpenAI)",
@@ -40,6 +41,7 @@ export const PROVIDERS = {
     envVar: "ANTHROPIC_BASE_URL",
     upstream: "https://api.moonshot.ai/anthropic",
     note: "Kimi runs through Claude Code. Make sure your Moonshot key is set (ANTHROPIC_AUTH_TOKEN).",
+    mcp: true, // runs the `claude` binary, so --mcp-config works here too
   },
   openai: {
     label: "OpenAI (generic)",

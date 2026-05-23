@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { summarize, listSessions, loadSession, readEntryById } from "./store.js";
 import { getAdapter, detectFormat } from "./formats/index.js";
 import { diffBlockLists } from "./diff.js";
+import { renderExport } from "./export.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.join(__dirname, "..", "web");
@@ -103,16 +104,9 @@ function apiExport(root, store, url, res) {
   const rec = getEntry(root, store, id);
   if (!rec) return json(res, { error: "not found" }, 404);
 
-  if (format === "json") {
-    res.writeHead(200, { "content-type": "application/json", ...attach(id, "json") });
-    return res.end(JSON.stringify(rec, null, 2));
-  }
-  if (format === "har") {
-    res.writeHead(200, { "content-type": "application/json", ...attach(id, "har.json") });
-    return res.end(JSON.stringify(toHar(rec), null, 2));
-  }
-  res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", ...attach(id, "md") });
-  return res.end(toMarkdown(rec));
+  const { contentType, ext, body } = renderExport(rec, format);
+  res.writeHead(200, { "content-type": contentType, ...attach(id, ext) });
+  return res.end(body);
 }
 
 // ---- helpers -------------------------------------------------------------
@@ -142,54 +136,4 @@ function serveStatic(p, res) {
 
 function attach(id, ext) {
   return { "content-disposition": `attachment; filename="ccglass-${id.replace(/\//g, "_")}.${ext}"` };
-}
-
-function toMarkdown(rec) {
-  const fmt = detectFormat(rec);
-  const A = getAdapter(fmt);
-  const body = rec.request?.body || {};
-  const view = A.view(body);
-  const out = [];
-  out.push(`# ${rec.request?.method} ${rec.request?.url}\n`);
-  out.push(`- format: ${fmt}`);
-  out.push(`- model: ${body.model}`);
-  out.push(`- captured: ${new Date(rec.ts).toISOString()}\n`);
-  out.push("## System\n");
-  for (const b of view.system) out.push(`**${b.label}**\n\n` + "```text\n" + b.text + "\n```\n");
-  out.push("## Messages\n");
-  for (const m of view.messages) out.push(`**${m.label}**\n\n` + "```text\n" + m.text + "\n```\n");
-  out.push(`## Tools (${view.tools.length})\n`);
-  for (const t of view.tools) out.push(`- **${t.name}** — ${(t.description || "").split("\n")[0]}`);
-  if (rec.response?.raw) {
-    const r = A.reassemble(rec.response.raw);
-    out.push("\n## Response\n");
-    out.push(`- stop_reason: ${r?.stop_reason}`);
-    out.push("```json\n" + JSON.stringify(r?.usage || {}, null, 2) + "\n```");
-    for (const b of r?.content || []) out.push("```text\n" + (b.text ?? JSON.stringify(b)) + "\n```\n");
-  }
-  return out.join("\n");
-}
-
-function toHar(rec) {
-  return {
-    log: {
-      version: "1.2",
-      creator: { name: "ccglass", version: "0.1.0" },
-      entries: [
-        {
-          startedDateTime: new Date(rec.ts).toISOString(),
-          request: {
-            method: rec.request?.method,
-            url: rec.request?.url,
-            headers: Object.entries(rec.request?.headers || {}).map(([name, value]) => ({ name, value: String(value) })),
-            postData: { mimeType: "application/json", text: JSON.stringify(rec.request?.body) },
-          },
-          response: {
-            status: rec.response?.status || 0,
-            content: { mimeType: "text/event-stream", text: rec.response?.raw || "" },
-          },
-        },
-      ],
-    },
-  };
 }

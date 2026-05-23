@@ -77,6 +77,15 @@ export class Store extends EventEmitter {
 export function summarize(rec) {
   const b = rec.request?.body || {};
   const items = Array.isArray(b.messages) ? b.messages : Array.isArray(b.input) ? b.input : [];
+  // Count tool calls that actually happened in this request (anthropic
+  // tool_use blocks, plus openai-style tool_calls), distinct from nTools
+  // which is just how many tools were *offered*.
+  let nToolUse = 0;
+  for (const m of items) {
+    const c = Array.isArray(m?.content) ? m.content : [];
+    for (const blk of c) if (blk?.type === "tool_use") nToolUse++;
+    if (Array.isArray(m?.tool_calls)) nToolUse += m.tool_calls.length;
+  }
   return {
     id: rec.id,
     session: rec.session,
@@ -88,6 +97,7 @@ export function summarize(rec) {
     model: b.model,
     nMessages: items.length,
     nTools: Array.isArray(b.tools) ? b.tools.length : 0,
+    nToolUse,
     status: rec.response?.status ?? null,
     pending: !rec.response,
   };

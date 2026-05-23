@@ -5,11 +5,13 @@ import { spawn } from "node:child_process";
 import readline from "node:readline";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { Store, readEntryById } from "./store.js";
 import { createProxy } from "./proxy.js";
 import { createServer } from "./server.js";
 import { resolveProvider, PROVIDERS, PICKABLE } from "./providers.js";
+import { renderExport } from "./export.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")).version;
@@ -32,19 +34,25 @@ OPTIONS
   --port <n>          Dashboard port (default: auto)
   --proxy-port <n>    Proxy port (default: auto)
   --dir <path>        Log directory (default: ./.ccglass)
-  --open              Open the dashboard in your browser
+  --no-open           Do NOT open the dashboard in your browser (opens by default)
   --no-redact         Do NOT mask auth tokens in saved logs
+  --no-mcp            Do NOT inject ccglass's inspection tools into Claude Code
+  --no-settings-override   Do NOT force Claude Code onto the proxy via --settings
+                           (use if a provider switcher set ANTHROPIC_BASE_URL)
   -h, --help          Show this help
   -v, --version       Show version
+
+  ccglass export <id> [--format raw|md|json|har]   (raw = readable HTTP transcript)
 
 EXAMPLES
   ccglass claude              # then chat in claude; watch http://127.0.0.1:<port>
   ccglass codex
   ccglass deepseek
-  ccglass run --provider openai -- my-openai-cli`;
+  ccglass run --provider openai -- my-openai-cli
+  ccglass export <id> --format raw > request.http`;
 
 function parseArgs(argv) {
-  const opts = { dir: path.resolve(".ccglass"), redact: true };
+  const opts = { dir: path.resolve(".ccglass"), redact: true, mcp: true, open: true, settingsOverride: true };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -54,7 +62,10 @@ function parseArgs(argv) {
     else if (a === "--upstream") opts.upstream = argv[++i];
     else if (a === "--provider") opts.provider = argv[++i];
     else if (a === "--open") opts.open = true;
+    else if (a === "--no-open") opts.open = false;
     else if (a === "--no-redact") opts.redact = false;
+    else if (a === "--no-mcp") opts.mcp = false;
+    else if (a === "--no-settings-override") opts.settingsOverride = false;
     else if (a === "--format") opts.format = argv[++i];
     else rest.push(a);
   }
@@ -94,9 +105,58 @@ function pickProvider() {
   });
 }
 
+// Claude Code accepts `--mcp-config <json>` to register MCP servers for a single
+// session without touching the user's persistent config. When inspecting a
+// Claude-based client, point it at our own stdio MCP (src/mcp.js) so the agent
+// can query the very requests it just made. CCGLASS_ROOT must match this run's
+// log dir, or the MCP would read a stale ./.ccglass instead.
+function mcpArgs(opts) {
+  const config = {
+    mcpServers: {
+      ccglass: {
+        command: process.execPath,
+        args: [path.join(__dirname, "mcp.js")],
+        env: { CCGLASS_ROOT: opts.dir },
+      },
+    },
+  };
+  return ["--mcp-config", JSON.stringify(config)];
+}
+
+// Read ANTHROPIC_BASE_URL from Claude Code's settings.json env block. A provider
+// switcher (cc-switch etc.) writes the active provider's base URL here, which
+// otherwise makes claude bypass our proxy. Project settings shadow user settings
+// in Claude Code's precedence, so check them in the same order.
+function settingsEnvBaseUrl() {
+  const files = [
+    path.resolve(".claude/settings.local.json"),
+    path.resolve(".claude/settings.json"),
+    path.join(os.homedir(), ".claude", "settings.json"),
+  ];
+  for (const f of files) {
+    try {
+      const url = JSON.parse(fs.readFileSync(f, "utf8"))?.env?.ANTHROPIC_BASE_URL;
+      if (url) return url;
+    } catch {}
+  }
+  return null;
+}
+
 async function wrap(command, args, opts) {
   const provider = resolveProvider(command, opts.provider);
-  const upstream = opts.upstream || provider.upstream;
+  const claudeBased = provider.command === "claude";
+
+  // If a provider switcher wrote ANTHROPIC_BASE_URL into settings.json and the
+  // user didn't override --upstream, forward there by default (the plain claude
+  // provider's default upstream is anthropic.com; kimi etc. keep their own).
+  const settingsBaseUrl = claudeBased ? settingsEnvBaseUrl() : null;
+  let upstream = opts.upstream || provider.upstream;
+  if (!opts.upstream && settingsBaseUrl && provider.upstream === "https://api.anthropic.com") {
+    upstream = settingsBaseUrl;
+    process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from Claude Code settings.json → ${upstream}\n`);
+  }
+
+  if (provider.mcp && opts.mcp) args = [...mcpArgs(opts), ...args];
 
   const store = new Store({ root: opts.dir, redact: opts.redact, format: provider.format });
   const proxy = createProxy({ upstream, store });
@@ -105,14 +165,25 @@ async function wrap(command, args, opts) {
   const proxyPort = await listen(proxy, opts.proxyPort);
   const dashPort = await listen(dashboard, opts.port);
   const dashUrl = `http://127.0.0.1:${dashPort}`;
+  const proxyUrl = `http://127.0.0.1:${proxyPort}`;
 
   process.stderr.write(banner(dashUrl, provider, upstream));
   if (opts.open) openBrowser(dashUrl);
 
+  // Command-line --settings outranks ~/.claude/settings.json and deep-merges
+  // (the user's hooks/plugins/theme are preserved), so this reliably points
+  // claude at our proxy even when a switcher set a base URL there — and sidesteps
+  // the env-var precedence regression in some Claude Code versions.
+  if (claudeBased && opts.settingsOverride) {
+    if (settingsBaseUrl)
+      process.stderr.write(`  \x1b[33mnote:\x1b[0m settings.json sets ANTHROPIC_BASE_URL=${settingsBaseUrl}; overriding it so claude hits the proxy\n`);
+    args = ["--settings", JSON.stringify({ env: { ANTHROPIC_BASE_URL: proxyUrl } }), ...args];
+  }
+
   const spawnCmd = provider.command || command;
   const child = spawn(spawnCmd, args, {
     stdio: "inherit",
-    env: { ...process.env, [provider.envVar]: `http://127.0.0.1:${proxyPort}` },
+    env: { ...process.env, [provider.envVar]: proxyUrl },
   });
 
   const shutdown = (code) => {
@@ -153,7 +224,7 @@ function exportEntry(id, opts) {
     process.stderr.write(`ccglass: no entry ${id} under ${opts.dir}\n`);
     process.exit(1);
   }
-  process.stdout.write(JSON.stringify(rec, null, 2) + "\n");
+  process.stdout.write(renderExport(rec, opts.format || "raw").body + "\n");
 }
 
 export async function main(argv) {
