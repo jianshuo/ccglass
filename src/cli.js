@@ -26,7 +26,7 @@ USAGE
   ccglass kimi   [args...]      Inspect Kimi (Moonshot, via Claude Code)
   ccglass run [--provider P] -- <cmd...>   Inspect any client
   ccglass view                  Open the dashboard over existing .ccglass/ logs
-  ccglass export <id> [--format md|json|har]
+  ccglass export <id> [--format raw|md|json|har]
 
 OPTIONS
   --provider <claude|codex|deepseek|kimi|openai>   Force format/env for \`run\`
@@ -41,8 +41,6 @@ OPTIONS
                            (use if a provider switcher set ANTHROPIC_BASE_URL)
   -h, --help          Show this help
   -v, --version       Show version
-
-  ccglass export <id> [--format raw|md|json|har]   (raw = readable HTTP transcript)
 
 EXAMPLES
   ccglass claude              # then chat in claude; watch http://127.0.0.1:<port>
