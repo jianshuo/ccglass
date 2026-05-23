@@ -17,16 +17,17 @@ const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.j
 const HELP = `ccglass v${VERSION} — see what your coding agent sends to the model
 
 USAGE
-  ccglass                       Pick a client interactively (claude / codex / kimi)
+  ccglass                       Pick a client interactively (claude / codex / deepseek / kimi)
   ccglass claude [args...]      Inspect Claude Code
   ccglass codex  [args...]      Inspect Codex (OpenAI)
+  ccglass deepseek [args...]    Inspect DeepSeek-TUI
   ccglass kimi   [args...]      Inspect Kimi (Moonshot, via Claude Code)
   ccglass run [--provider P] -- <cmd...>   Inspect any client
   ccglass view                  Open the dashboard over existing .ccglass/ logs
   ccglass export <id> [--format md|json|har]
 
 OPTIONS
-  --provider <claude|codex|kimi|openai>   Force format/env for \`run\`
+  --provider <claude|codex|deepseek|kimi|openai>   Force format/env for \`run\`
   --upstream <url>    Override the upstream API
   --port <n>          Dashboard port (default: auto)
   --proxy-port <n>    Proxy port (default: auto)
@@ -39,6 +40,7 @@ OPTIONS
 EXAMPLES
   ccglass claude              # then chat in claude; watch http://127.0.0.1:<port>
   ccglass codex
+  ccglass deepseek
   ccglass run --provider openai -- my-openai-cli`;
 
 function parseArgs(argv) {
