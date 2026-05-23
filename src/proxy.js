@@ -40,7 +40,7 @@ export function createProxy({ upstream, store }) {
           protocol: up.protocol,
           hostname: up.hostname,
           port: up.port || (up.protocol === "http:" ? 80 : 443),
-          path: req.url,
+          path: (up.pathname === "/" ? "" : up.pathname) + req.url,
           method: req.method,
           headers,
         },
