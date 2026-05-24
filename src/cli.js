@@ -282,8 +282,14 @@ async function wrap(command, args, opts) {
   };
 
   child.on("error", (e) => {
-    if (e.code === "ENOENT") process.stderr.write(`\nccglass: command not found: ${spawnCmd}\n`);
-    else process.stderr.write(`\nccglass: ${e.message}\n`);
+    if (e.code === "ENOENT") {
+      process.stderr.write(`\nccglass: command not found: ${spawnCmd}\n`);
+      process.stderr.write(`  Make sure '${spawnCmd}' is installed and available in your PATH.\n`);
+      if (process.platform === "win32")
+        process.stderr.write(`  On Windows, try reinstalling it (e.g. npm install -g ${spawnCmd}) and reopen your terminal.\n`);
+    } else {
+      process.stderr.write(`\nccglass: ${e.message}\n`);
+    }
     shutdown(1);
   });
   child.on("exit", (code) => {
