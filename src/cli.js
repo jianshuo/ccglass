@@ -24,6 +24,7 @@ USAGE
   ccglass codex  [args...]      Inspect Codex (OpenAI)
   ccglass deepseek [args...]    Inspect DeepSeek-TUI
   ccglass kimi   [args...]      Inspect Kimi (Moonshot, via Claude Code)
+  ccglass opencode [args...]  Inspect OpenCode
   ccglass run [--provider P] -- <cmd...>   Inspect any client
   ccglass view                  Open the dashboard over existing .ccglass/ logs
   ccglass export <id> [--format raw|md|json|har]
@@ -39,6 +40,8 @@ OPTIONS
   --no-mcp            Do NOT inject ccglass's inspection tools into Claude Code
   --no-settings-override   Do NOT force Claude Code onto the proxy via --settings
                            (use if a provider switcher set ANTHROPIC_BASE_URL)
+  --env-var <name>    Override the environment variable used to set the proxy URL
+                           (default depends on provider, e.g. ANTHROPIC_BASE_URL)
   -h, --help          Show this help
   -v, --version       Show version
 
@@ -47,6 +50,7 @@ EXAMPLES
   ccglass codex
   ccglass deepseek
   ccglass run --provider openai -- my-openai-cli
+  ccglass run --provider claude --env-var MY_CUSTOM_BASE_URL -- my-tool
   ccglass export <id> --format raw > request.http`;
 
 function parseArgs(argv) {
@@ -64,6 +68,7 @@ function parseArgs(argv) {
     else if (a === "--no-redact") opts.redact = false;
     else if (a === "--no-mcp") opts.mcp = false;
     else if (a === "--no-settings-override") opts.settingsOverride = false;
+    else if (a === "--env-var") opts.envVar = argv[++i];
     else if (a === "--format") opts.format = argv[++i];
     else rest.push(a);
   }
@@ -141,14 +146,16 @@ function settingsEnvBaseUrl() {
 }
 
 async function wrap(command, args, opts) {
-  const provider = resolveProvider(command, opts.provider);
+  const provider = resolveProvider(command, opts.provider, opts.envVar);
   const claudeBased = provider.command === "claude";
 
   // If a provider switcher wrote ANTHROPIC_BASE_URL into settings.json and the
   // user didn't override --upstream, forward there by default (the plain claude
   // provider's default upstream is anthropic.com; kimi etc. keep their own).
   const settingsBaseUrl = claudeBased ? settingsEnvBaseUrl() : null;
-  let upstream = opts.upstream || provider.upstream;
+  let upstream = opts.upstream || (provider.upstream === "auto" ? null : provider.upstream);
+  // autoUpstream: resolve upstream from the same env var we're about to override
+  if (!upstream && provider.autoUpstream) upstream = process.env[provider.envVar];
   if (!opts.upstream && settingsBaseUrl && provider.upstream === "https://api.anthropic.com") {
     upstream = settingsBaseUrl;
     process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from Claude Code settings.json → ${upstream}\n`);
@@ -172,7 +179,7 @@ async function wrap(command, args, opts) {
   // (the user's hooks/plugins/theme are preserved), so this reliably points
   // claude at our proxy even when a switcher set a base URL there — and sidesteps
   // the env-var precedence regression in some Claude Code versions.
-  if (claudeBased && opts.settingsOverride) {
+  if (claudeBased && opts.settingsOverride && !provider.noSettings) {
     if (settingsBaseUrl)
       process.stderr.write(`  \x1b[33mnote:\x1b[0m settings.json sets ANTHROPIC_BASE_URL=${settingsBaseUrl}; overriding it so claude hits the proxy\n`);
     args = ["--settings", JSON.stringify({ env: { ANTHROPIC_BASE_URL: proxyUrl } }), ...args];

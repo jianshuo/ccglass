@@ -2,7 +2,7 @@
 
 **See exactly what your coding agent sends to the model.** A lightweight
 local logging reverse-proxy + web dashboard for **Claude Code, Codex,
-DeepSeek-TUI, and Kimi**.
+OpenCode, DeepSeek-TUI, and Kimi**.
 One command, like `ollama`:
 
 ```bash
@@ -23,6 +23,7 @@ Run with no arguments and `ccglass` asks which client to inspect:
     2) Codex (OpenAI)
     3) DeepSeek-TUI
     4) Kimi (Moonshot, via Claude Code)
+    5) OpenCode
 
   >
 ```
@@ -57,12 +58,18 @@ pinning.
 | `deepseek` | DeepSeek-TUI dispatcher | `DEEPSEEK_BASE_URL` | api.deepseek.com | OpenAI Chat |
 | `deepseek-tui` | DeepSeek-TUI runtime | `DEEPSEEK_BASE_URL` | api.deepseek.com | OpenAI Chat |
 | `kimi` | Claude Code → Moonshot | `ANTHROPIC_BASE_URL` | api.moonshot.ai/anthropic | Anthropic Messages |
+| `opencode` | OpenCode | `OPENAI_BASE_URL` | auto (from env) | OpenAI Chat |
 | `run --provider <p> -- <cmd>` | any client | per provider | per provider | per provider |
 
 Kimi runs through Claude Code against Moonshot's Anthropic-compatible endpoint —
 make sure your Moonshot key is set (`ANTHROPIC_AUTH_TOKEN`).
 DeepSeek-TUI uses its OpenAI-compatible Chat Completions endpoint — make sure
 your DeepSeek key is set (`DEEPSEEK_API_KEY`).
+
+OpenCode auto-detects the upstream from the `OPENAI_BASE_URL` environment
+variable, so you don't need `--upstream` — just make sure it's set before
+running `ccglass opencode`. Use `--env-var` to override the environment
+variable name if your OpenCode provider uses a custom one.
 
 ## What you get
 
@@ -95,6 +102,7 @@ ccglass codex  [args...]      # inspect Codex
 ccglass deepseek [args...]    # inspect DeepSeek-TUI (dispatcher)
 ccglass deepseek-tui [args...] # inspect DeepSeek-TUI runtime directly
 ccglass kimi   [args...]      # inspect Kimi (via Claude Code)
+ccglass opencode [args...]    # inspect OpenCode (auto-detects upstream from OPENAI_BASE_URL)
 ccglass run --provider openai -- <cmd...>   # inspect any client
 ccglass view                  # re-open the dashboard over saved .ccglass/ logs
 ccglass export <id> --format raw|md|json|har   # raw = readable HTTP transcript
@@ -113,6 +121,7 @@ ccglass export <id> --format raw|md|json|har   # raw = readable HTTP transcript
 | `--no-mcp` | off | Don't inject ccglass's self-inspection tools into Claude Code |
 | `--no-settings-override` | off | Don't force Claude Code onto the proxy via `--settings` (for when a provider switcher set `ANTHROPIC_BASE_URL`) |
 | `--no-redact` | off | Keep auth tokens unmasked in saved logs |
+| `--env-var <name>` | per provider | Override the environment variable used to set the proxy URL |
 
 ## Logs & secrets
 
