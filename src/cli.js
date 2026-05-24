@@ -33,7 +33,7 @@ USAGE
 
 OPTIONS
   --provider <p>      Force format/env for \`run\`
-                      Built-in: claude|codex|deepseek|kimi|openai|opencode
+                      Built-in: claude|codex|codex-azure|deepseek|kimi|openai|opencode
                               glm|ollama|lmstudio|openrouter|bedrock|vertex
   --upstream <url>    Override the upstream API (alias: --base-url)
   --base-url <url>    Alias for --upstream
@@ -53,6 +53,7 @@ OPTIONS
 EXAMPLES
   ccglass claude              # then chat in claude; watch http://127.0.0.1:<port>
   ccglass codex
+  ccglass codex-azure         # set AZURE_OPENAI_ENDPOINT first
   ccglass deepseek
   ccglass run --provider ollama -- my-openai-cli
   ccglass run --provider openrouter -- my-openai-cli

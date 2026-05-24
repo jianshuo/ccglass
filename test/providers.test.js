@@ -121,3 +121,22 @@ test("opencode provider uses OPENAI_BASE_URL with autoUpstream", () => {
 test("opencode is available in the interactive picker", () => {
   assert.ok(PICKABLE.includes("opencode"));
 });
+
+test("codex-azure provider uses AZURE_OPENAI_ENDPOINT with autoUpstream", () => {
+  const provider = resolveProvider("codex-azure");
+
+  assert.equal(provider.label, "Codex (Azure OpenAI)");
+  assert.equal(provider.command, "codex");
+  assert.equal(provider.format, "openai");
+  assert.equal(provider.envVar, "AZURE_OPENAI_ENDPOINT");
+  assert.equal(provider.autoUpstream, true);
+});
+
+test("codex-azure can be used as a run provider override", () => {
+  const provider = resolveProvider("custom-agent", "codex-azure");
+
+  assert.equal(provider.command, "custom-agent");
+  assert.equal(provider.format, "openai");
+  assert.equal(provider.envVar, "AZURE_OPENAI_ENDPOINT");
+  assert.equal(provider.autoUpstream, true);
+});

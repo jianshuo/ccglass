@@ -38,6 +38,18 @@ test("opencode exits with code 1 and a clear error when OPENAI_BASE_URL is empty
   assert.match(stderr, /OPENAI_BASE_URL/);
 });
 
+test("codex-azure exits with code 1 and a clear error when AZURE_OPENAI_ENDPOINT is unset", async () => {
+  const env = { ...process.env };
+  delete env.AZURE_OPENAI_ENDPOINT;
+
+  const { code, stderr } = await run(["codex-azure"], env);
+
+  assert.equal(code, 1);
+  assert.match(stderr, /Codex \(Azure OpenAI\)/);
+  assert.match(stderr, /AZURE_OPENAI_ENDPOINT/);
+  assert.match(stderr, /--upstream/);
+});
+
 test("--version flag prints version and exits 0", async () => {
   const { code, stdout } = await run(["--version"]);
 

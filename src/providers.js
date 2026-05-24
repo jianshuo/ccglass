@@ -18,6 +18,15 @@ export const PROVIDERS = {
     envVar: "OPENAI_BASE_URL",
     upstream: "https://api.openai.com",
   },
+  "codex-azure": {
+    label: "Codex (Azure OpenAI)",
+    command: "codex",
+    format: "openai",
+    envVar: "AZURE_OPENAI_ENDPOINT",
+    upstream: "auto",
+    autoUpstream: true,
+    note: "Codex Azure: set AZURE_OPENAI_ENDPOINT to your Azure OpenAI endpoint and AZURE_OPENAI_API_KEY to your key.",
+  },
   deepseek: {
     label: "DeepSeek-TUI",
     command: "deepseek",
