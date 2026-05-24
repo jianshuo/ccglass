@@ -24,14 +24,17 @@ USAGE
   ccglass codex  [args...]      Inspect Codex (OpenAI)
   ccglass deepseek [args...]    Inspect DeepSeek-TUI
   ccglass kimi   [args...]      Inspect Kimi (Moonshot, via Claude Code)
-  ccglass opencode [args...]  Inspect OpenCode
+  ccglass opencode [args...]    Inspect OpenCode
   ccglass run [--provider P] -- <cmd...>   Inspect any client
   ccglass view                  Open the dashboard over existing .ccglass/ logs
   ccglass export <id> [--format raw|md|json|har]
 
 OPTIONS
-  --provider <claude|codex|deepseek|kimi|openai>   Force format/env for \`run\`
-  --upstream <url>    Override the upstream API
+  --provider <p>      Force format/env for \`run\`
+                      Built-in: claude|codex|deepseek|kimi|openai|opencode
+                              glm|ollama|lmstudio|openrouter|bedrock|vertex
+  --upstream <url>    Override the upstream API (alias: --base-url)
+  --base-url <url>    Alias for --upstream
   --port <n>          Dashboard port (default: auto)
   --proxy-port <n>    Proxy port (default: auto)
   --dir <path>        Log directory (default: ./.ccglass)
@@ -49,8 +52,11 @@ EXAMPLES
   ccglass claude              # then chat in claude; watch http://127.0.0.1:<port>
   ccglass codex
   ccglass deepseek
-  ccglass run --provider openai -- my-openai-cli
-  ccglass run --provider claude --env-var MY_CUSTOM_BASE_URL -- my-tool
+  ccglass run --provider ollama -- my-openai-cli
+  ccglass run --provider openrouter -- my-openai-cli
+  ccglass run --provider glm -- my-openai-cli     # set OPENAI_BASE_URL first
+  ccglass run --provider bedrock -- claude        # set ANTHROPIC_BASE_URL first
+  ccglass run --upstream https://my.api/v1 --env-var MY_BASE_URL -- my-tool
   ccglass export <id> --format raw > request.http`;
 
 function parseArgs(argv) {
@@ -61,7 +67,7 @@ function parseArgs(argv) {
     if (a === "--port") opts.port = Number(argv[++i]);
     else if (a === "--proxy-port") opts.proxyPort = Number(argv[++i]);
     else if (a === "--dir") opts.dir = path.resolve(argv[++i]);
-    else if (a === "--upstream") opts.upstream = argv[++i];
+    else if (a === "--upstream" || a === "--base-url") opts.upstream = argv[++i];
     else if (a === "--provider") opts.provider = argv[++i];
     else if (a === "--open") opts.open = true;
     else if (a === "--no-open") opts.open = false;
@@ -161,6 +167,14 @@ async function wrap(command, args, opts) {
   if (!opts.upstream && settingsBaseUrl && provider.upstream === "https://api.anthropic.com") {
     upstream = settingsBaseUrl;
     process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from Claude Code settings.json → ${upstream}\n`);
+  }
+
+  if (!upstream) {
+    process.stderr.write(
+      `ccglass: ${provider.label} needs an upstream URL.\n` +
+      `  Set ${provider.envVar} in your environment, or pass --upstream <url>.\n`
+    );
+    process.exit(1);
   }
 
   if (provider.mcp && opts.mcp) args = [...mcpArgs(opts), ...args];

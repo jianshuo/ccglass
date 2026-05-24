@@ -2,7 +2,7 @@
 
 **See exactly what your coding agent sends to the model.** A lightweight
 local logging reverse-proxy + web dashboard for **Claude Code, Codex,
-OpenCode, DeepSeek-TUI, and Kimi**.
+OpenCode, DeepSeek-TUI, Kimi, Ollama, OpenRouter, and more**.
 One command, like `ollama`:
 
 ```bash
@@ -49,9 +49,9 @@ updates. `ccglass` sidesteps all of it: the client does the HTTPS to the real AP
 itself; you only intercept the plain HTTP hop to localhost. No CA certs, no TLS
 pinning.
 
-## Supported clients
+## Providers
 
-| `ccglass <client>` | Wraps | Env var | Upstream | Format |
+| `ccglass <provider>` or `--provider` | Wraps | Env var | Upstream | Format |
 |---|---|---|---|---|
 | `claude` | Claude Code | `ANTHROPIC_BASE_URL` | api.anthropic.com | Anthropic Messages |
 | `codex` | Codex | `OPENAI_BASE_URL` | api.openai.com | OpenAI Responses / Chat |
@@ -59,17 +59,42 @@ pinning.
 | `deepseek-tui` | DeepSeek-TUI runtime | `DEEPSEEK_BASE_URL` | api.deepseek.com | OpenAI Chat |
 | `kimi` | Claude Code → Moonshot | `ANTHROPIC_BASE_URL` | api.moonshot.ai/anthropic | Anthropic Messages |
 | `opencode` | OpenCode | `OPENAI_BASE_URL` | auto (from env) | OpenAI Chat |
+| `ollama` | any Ollama-backed client | `OPENAI_BASE_URL` | 127.0.0.1:11434 | OpenAI Chat |
+| `lmstudio` | any LM Studio-backed client | `OPENAI_BASE_URL` | 127.0.0.1:1234 | OpenAI Chat |
+| `openrouter` | any OpenRouter-backed client | `OPENAI_BASE_URL` | openrouter.ai/api | OpenAI Chat |
+| `glm` | any GLM/Zhipu-backed client | `OPENAI_BASE_URL` | auto (from env) | OpenAI Chat |
+| `bedrock` | Claude Code → AWS Bedrock | `ANTHROPIC_BASE_URL` | auto (from env) | Anthropic Messages |
+| `vertex` | Claude Code → Google Vertex AI | `ANTHROPIC_BASE_URL` | auto (from env) | Anthropic Messages |
 | `run --provider <p> -- <cmd>` | any client | per provider | per provider | per provider |
 
-Kimi runs through Claude Code against Moonshot's Anthropic-compatible endpoint —
-make sure your Moonshot key is set (`ANTHROPIC_AUTH_TOKEN`).
-DeepSeek-TUI uses its OpenAI-compatible Chat Completions endpoint — make sure
-your DeepSeek key is set (`DEEPSEEK_API_KEY`).
+**Notes by provider:**
 
-OpenCode auto-detects the upstream from the `OPENAI_BASE_URL` environment
-variable, so you don't need `--upstream` — just make sure it's set before
-running `ccglass opencode`. Use `--env-var` to override the environment
-variable name if your OpenCode provider uses a custom one.
+- **Kimi** — runs through Claude Code against Moonshot's Anthropic-compatible endpoint; set `ANTHROPIC_AUTH_TOKEN` to your Moonshot key.
+- **DeepSeek-TUI** — OpenAI-compatible Chat Completions; set `DEEPSEEK_API_KEY`.
+- **OpenCode** — auto-detects upstream from `OPENAI_BASE_URL`; set it before running. Use `--env-var` if your OpenCode provider uses a different env var name.
+- **Ollama / LM Studio** — no key needed for local models; pass `--upstream` if your server runs on a non-default address.
+- **OpenRouter** — set `OPENAI_API_KEY` to your OpenRouter key.
+- **GLM/Zhipu** — set `OPENAI_BASE_URL` to your Zhipu endpoint (e.g. `https://open.bigmodel.cn/api/paas/v4`) and `OPENAI_API_KEY` to your Zhipu key.
+- **AWS Bedrock** — set `ANTHROPIC_BASE_URL` to your Bedrock runtime endpoint (e.g. `https://bedrock-runtime.us-east-1.amazonaws.com`) before running; AWS credentials are forwarded as-is from your environment.
+- **Google Vertex AI** — set `ANTHROPIC_BASE_URL` to your Vertex AI endpoint (e.g. `https://us-east5-aiplatform.googleapis.com`) before running; GCP credentials are forwarded as-is.
+
+### Custom provider recipe
+
+Any tool that reads a base-URL env var can be inspected with the generic escape hatch:
+
+```bash
+# OpenAI-compatible tool with a custom endpoint
+ccglass run \
+  --upstream https://my.custom.api/v1 \
+  --env-var MY_CUSTOM_BASE_URL \
+  -- my-tool [args...]
+
+# Shorthand alias
+ccglass run --base-url https://my.custom.api/v1 --env-var MY_BASE_URL -- my-tool
+
+# Reuse an existing provider's format but point at a different upstream
+ccglass run --provider openai --upstream https://my.openai-compat.api -- my-tool
+```
 
 ## What you get
 

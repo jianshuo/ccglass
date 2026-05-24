@@ -32,3 +32,77 @@ test("deepseek can be used as a run provider override", () => {
 test("deepseek is available in the interactive picker", () => {
   assert.ok(PICKABLE.includes("deepseek"));
 });
+
+test("ollama preset uses OPENAI_BASE_URL and a fixed local upstream", () => {
+  const provider = resolveProvider("ollama");
+
+  assert.equal(provider.label, "Ollama (local)");
+  assert.equal(provider.format, "openai");
+  assert.equal(provider.envVar, "OPENAI_BASE_URL");
+  assert.equal(provider.upstream, "http://127.0.0.1:11434");
+});
+
+test("lmstudio preset uses OPENAI_BASE_URL and a fixed local upstream", () => {
+  const provider = resolveProvider("lmstudio");
+
+  assert.equal(provider.label, "LM Studio (local)");
+  assert.equal(provider.format, "openai");
+  assert.equal(provider.envVar, "OPENAI_BASE_URL");
+  assert.equal(provider.upstream, "http://127.0.0.1:1234");
+});
+
+test("openrouter preset uses OPENAI_BASE_URL and the OpenRouter base upstream", () => {
+  const provider = resolveProvider("openrouter");
+
+  assert.equal(provider.label, "OpenRouter");
+  assert.equal(provider.format, "openai");
+  assert.equal(provider.envVar, "OPENAI_BASE_URL");
+  assert.equal(provider.upstream, "https://openrouter.ai/api");
+});
+
+test("glm preset uses OPENAI_BASE_URL with autoUpstream", () => {
+  const provider = resolveProvider("glm");
+
+  assert.equal(provider.label, "GLM / Zhipu AI");
+  assert.equal(provider.format, "openai");
+  assert.equal(provider.envVar, "OPENAI_BASE_URL");
+  assert.equal(provider.autoUpstream, true);
+});
+
+test("bedrock preset uses ANTHROPIC_BASE_URL with autoUpstream", () => {
+  const provider = resolveProvider("bedrock");
+
+  assert.equal(provider.label, "AWS Bedrock (via Claude Code)");
+  assert.equal(provider.format, "anthropic");
+  assert.equal(provider.envVar, "ANTHROPIC_BASE_URL");
+  assert.equal(provider.command, "claude");
+  assert.equal(provider.autoUpstream, true);
+});
+
+test("vertex preset uses ANTHROPIC_BASE_URL with autoUpstream", () => {
+  const provider = resolveProvider("vertex");
+
+  assert.equal(provider.label, "Google Vertex AI (via Claude Code)");
+  assert.equal(provider.format, "anthropic");
+  assert.equal(provider.envVar, "ANTHROPIC_BASE_URL");
+  assert.equal(provider.command, "claude");
+  assert.equal(provider.autoUpstream, true);
+});
+
+test("ollama can be used as a run provider override", () => {
+  const provider = resolveProvider("custom-agent", "ollama");
+
+  assert.equal(provider.command, "custom-agent");
+  assert.equal(provider.format, "openai");
+  assert.equal(provider.envVar, "OPENAI_BASE_URL");
+  assert.equal(provider.upstream, "http://127.0.0.1:11434");
+});
+
+test("openrouter can be used as a run provider override", () => {
+  const provider = resolveProvider("my-tool", "openrouter");
+
+  assert.equal(provider.command, "my-tool");
+  assert.equal(provider.format, "openai");
+  assert.equal(provider.envVar, "OPENAI_BASE_URL");
+  assert.equal(provider.upstream, "https://openrouter.ai/api");
+});
