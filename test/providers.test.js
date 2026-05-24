@@ -106,3 +106,18 @@ test("openrouter can be used as a run provider override", () => {
   assert.equal(provider.envVar, "OPENAI_BASE_URL");
   assert.equal(provider.upstream, "https://openrouter.ai/api");
 });
+
+test("opencode provider uses OPENAI_BASE_URL with autoUpstream", () => {
+  const provider = resolveProvider("opencode");
+
+  assert.equal(provider.label, "OpenCode");
+  assert.equal(provider.command, "opencode");
+  assert.equal(provider.format, "openai");
+  assert.equal(provider.envVar, "OPENAI_BASE_URL");
+  assert.equal(provider.upstream, "auto");
+  assert.equal(provider.autoUpstream, true);
+});
+
+test("opencode is available in the interactive picker", () => {
+  assert.ok(PICKABLE.includes("opencode"));
+});
