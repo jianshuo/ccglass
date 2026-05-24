@@ -1,13 +1,20 @@
 name: Claude
 
 # Two ways Claude helps on this repo:
-#   1. auto-fix  — every newly opened issue: Claude investigates and opens a fix PR.
+#   1. auto-fix  — every newly opened issue: Claude TRIAGES it first (worth doing?
+#                  on-direction? architecturally safe? small + low-risk?) and only
+#                  opens a fix PR if it passes; otherwise it just comments.
 #   2. mention   — "@claude" in any issue/PR comment: Claude responds / iterates.
 # Claude only ever opens PRs; it never pushes to main, bumps the version, or
 # publishes. Merging + releasing stays a human decision.
 #
-# Auth: run `claude /install-github-app` once to install the GitHub App and store
-# the CLAUDE_CODE_OAUTH_TOKEN secret used below.
+# Auth:
+#   - CLAUDE_CODE_OAUTH_TOKEN — run `claude /install-github-app` once to store it.
+#   - CLAUDE_TRIGGER_PAT — a classic PAT (repo scope) or fine-grained PAT (Contents,
+#     Pull requests, Issues = Read/Write) owned by a maintainer WITH write access.
+#     auto-fix runs as this PAT so it works on issues opened by external users
+#     (the GitHub-App OIDC token exchange otherwise 401s for non-write-access
+#     actors). Store it as a repo secret named CLAUDE_TRIGGER_PAT.
 
 on:
   issues:
@@ -34,6 +41,9 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Run as a maintainer PAT so this works on issues opened by external
+          # users (the App OIDC token exchange 401s for non-write-access actors).
+          github_token: ${{ secrets.CLAUDE_TRIGGER_PAT }}
           prompt: |
             A new issue was opened on the ccglass repo (a zero-dependency Node
             logging reverse-proxy + dashboard for coding agents).
@@ -42,17 +52,26 @@ jobs:
 
             ${{ github.event.issue.body }}
 
-            Your job:
-            1. Investigate the issue against the actual code. If it's a real bug
-               or a small, well-scoped feature, fix it. If it's unclear, too
-               large, or out of scope, post a comment asking for clarification
-               instead of guessing — do NOT open a PR in that case.
-            2. Keep the change minimal and consistent with the surrounding style.
-               This package has zero runtime dependencies — do not add any.
-            3. Run `npm test` and make sure it passes before opening the PR.
-            4. Open a pull request against `main` that references this issue
-               (e.g. "Fixes #${{ github.event.issue.number }}"). Explain what you
-               changed and how you verified it.
+            STEP 1 — TRIAGE FIRST. Before writing any code, investigate the issue
+            against the actual codebase and judge whether it is worth doing:
+              - Is it a real bug, or a genuinely useful and well-scoped feature?
+              - Is it aligned with the project's direction (a tiny zero-dependency
+                logging proxy + dashboard — NOT a kitchen-sink tool)?
+              - Can it be done as a SMALL, localized change WITHOUT restructuring
+                the architecture or adding abstractions the codebase doesn't need?
+              - Is it low-risk — unlikely to introduce new bugs or regressions?
+            If it fails ANY of these (too large, architecturally invasive, out of
+            scope, unclear, or risky), DO NOT open a PR. Instead post one polite
+            comment on the issue explaining your assessment — and, if it's just
+            unclear, ask for the specific clarification you need — then STOP.
+
+            STEP 2 — Only if it passes triage, implement the fix:
+              - Keep the change minimal and consistent with the surrounding style.
+                This package has zero runtime dependencies — do not add any.
+              - Run `npm test` and make sure it passes before opening the PR.
+              - Open a pull request against `main` that references this issue
+                (e.g. "Fixes #${{ github.event.issue.number }}"). Explain what you
+                changed and how you verified it.
 
             Do NOT push to main directly. Do NOT bump the version in package.json
             or publish to npm — releases are done by the maintainer.
