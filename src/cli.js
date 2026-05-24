@@ -7,6 +7,7 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { proxyArgs } from "./child-args.js";
 import { spawnCommand } from "./spawn-command.js";
 import { Store, readEntryById } from "./store.js";
 import { createProxy } from "./proxy.js";
@@ -188,6 +189,7 @@ async function wrap(command, args, opts) {
   const dashPort = await listen(dashboard, opts.port);
   const dashUrl = `http://127.0.0.1:${dashPort}`;
   const proxyUrl = `http://127.0.0.1:${proxyPort}`;
+  args = proxyArgs(args, provider.envVar, proxyUrl, process.env, upstream);
 
   process.stderr.write(banner(dashUrl, provider, upstream));
   if (opts.open) openBrowser(dashUrl);
