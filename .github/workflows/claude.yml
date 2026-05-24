@@ -44,6 +44,13 @@ jobs:
           # Run as a maintainer PAT so this works on issues opened by external
           # users (the App OIDC token exchange 401s for non-write-access actors).
           github_token: ${{ secrets.CLAUDE_TRIGGER_PAT }}
+          # The action ALSO checks the triggering actor's own permission level
+          # and bails ("Actor does not have write permissions") on issues opened
+          # by external users — even though we run as a maintainer PAT. Auto-fix
+          # is meant to triage EVERY new issue, so allow all actors here. Only
+          # works because github_token (above) is set. Safe: this job just
+          # triages + opens a PR for human review; it never pushes to main.
+          allowed_non_write_users: "*"
           prompt: |
             A new issue was opened on the ccglass repo (a zero-dependency Node
             logging reverse-proxy + dashboard for coding agents).
