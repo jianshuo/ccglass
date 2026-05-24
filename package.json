@@ -1,6 +1,6 @@
 {
   "name": "ccglass",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "See exactly what your coding agent sends to the model — a local logging reverse-proxy + web dashboard for Claude Code, Codex, DeepSeek-TUI, and Kimi. Just run `ccglass`.",
   "type": "module",
   "bin": {
