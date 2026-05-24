@@ -74,6 +74,18 @@ export const openai = {
             cache: false,
           };
         }
+        if (item.type === "reasoning") {
+          const summaryText = Array.isArray(item.summary)
+            ? item.summary.map((s) => s.text ?? "").join("")
+            : flatten(item.content);
+          return {
+            label: `input[${i}].reasoning`,
+            role: "assistant",
+            type: "reasoning",
+            text: summaryText || JSON.stringify(item),
+            cache: false,
+          };
+        }
         return {
           label: `input[${i}].${item.role || item.type || "item"}`,
           role: item.role || item.type || "",
@@ -147,6 +159,7 @@ export const openai = {
     let stop_reason = null;
     let usage = {};
     let text = "";
+    let reasoningText = "";
     const toolCalls = {}; // index/id -> {name, args}
 
     for (const line of raw.split(/\r?\n/)) {
@@ -163,6 +176,8 @@ export const openai = {
       // Responses API events
       if (typeof ev.type === "string" && ev.type.startsWith("response.")) {
         if (ev.type === "response.output_text.delta") text += ev.delta || "";
+        else if (ev.type === "response.reasoning_summary_text.delta") reasoningText += ev.delta || "";
+        else if (ev.type === "response.output_text.done") { /* text complete; deltas already accumulated */ }
         else if (ev.type === "response.output_item.added" && ev.item?.type === "function_call") {
           toolCalls[ev.output_index ?? ev.item.id ?? Object.keys(toolCalls).length] = { name: ev.item.name, args: "" };
         } else if (ev.type === "response.function_call_arguments.delta") {
@@ -196,6 +211,7 @@ export const openai = {
     }
 
     const content = [];
+    if (reasoningText) content.push({ type: "reasoning", text: reasoningText });
     if (text) content.push({ type: "text", text });
     for (const tc of Object.values(toolCalls)) {
       let input;
@@ -253,7 +269,12 @@ function normalizeFinal(json) {
   if (json.output || json.object === "response") {
     const content = [];
     for (const item of json.output || []) {
-      if (item.type === "message") {
+      if (item.type === "reasoning") {
+        const summaryText = Array.isArray(item.summary)
+          ? item.summary.map((s) => s.text ?? "").join("")
+          : "";
+        if (summaryText) content.push({ type: "reasoning", text: summaryText });
+      } else if (item.type === "message") {
         for (const c of item.content || []) if (c.text || c.output_text) content.push({ type: "text", text: c.text ?? c.output_text });
       } else if (item.type === "function_call") {
         let input;
