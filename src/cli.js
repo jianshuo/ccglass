@@ -7,6 +7,7 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { spawnCommand } from "./spawn-command.js";
 import { Store, readEntryById } from "./store.js";
 import { createProxy } from "./proxy.js";
 import { createServer } from "./server.js";
@@ -202,7 +203,7 @@ async function wrap(command, args, opts) {
   }
 
   const spawnCmd = provider.command || command;
-  const child = spawn(spawnCmd, args, {
+  const child = spawnCommand(spawnCmd, args, {
     stdio: "inherit",
     env: { ...process.env, [provider.envVar]: proxyUrl },
   });
