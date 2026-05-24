@@ -136,6 +136,39 @@ function mcpArgs(opts) {
   return ["--mcp-config", JSON.stringify(config)];
 }
 
+// Run `codex doctor` and parse the auth mode / endpoint so we can warn the user
+// when Codex is configured with ChatGPT auth (wss:// websocket transport), which
+// bypasses OPENAI_BASE_URL and therefore never reaches our proxy.
+function detectCodexChatGPTAuth() {
+  return new Promise((resolve) => {
+    let output = "";
+    let settled = false;
+    const finish = (result) => { if (!settled) { settled = true; resolve(result); } };
+
+    let child;
+    try {
+      child = spawnCommand("codex", ["doctor"], { stdio: ["ignore", "pipe", "pipe"] });
+    } catch {
+      return finish(null);
+    }
+
+    const timer = setTimeout(() => { try { child.kill(); } catch {} finish(null); }, 5000);
+    const collect = (d) => { output += d; };
+    child.stdout?.on("data", collect);
+    child.stderr?.on("data", collect);
+    child.on("error", () => { clearTimeout(timer); finish(null); });
+    child.on("close", () => {
+      clearTimeout(timer);
+      const authMatch = output.match(/auth\s+mode\s+(\S+)/i);
+      const endpointMatch = output.match(/endpoint\s+(\S+)/i);
+      finish({
+        authMode: authMatch?.[1]?.toLowerCase() ?? null,
+        endpoint: endpointMatch?.[1] ?? null,
+      });
+    });
+  });
+}
+
 // Read ANTHROPIC_BASE_URL from Claude Code's settings.json env block. A provider
 // switcher (cc-switch etc.) writes the active provider's base URL here, which
 // otherwise makes claude bypass our proxy. Project settings shadow user settings
@@ -158,6 +191,16 @@ function settingsEnvBaseUrl() {
 async function wrap(command, args, opts) {
   const provider = resolveProvider(command, opts.provider, opts.envVar);
   const claudeBased = provider.command === "claude";
+
+  // Detect Codex ChatGPT-auth / websocket mode early so we can warn the user
+  // before opening the (otherwise empty) dashboard.
+  let codexChatGPTInfo = null;
+  if (provider.command === "codex") {
+    const info = await detectCodexChatGPTAuth();
+    if (info?.authMode === "chatgpt" || info?.endpoint?.startsWith("wss://")) {
+      codexChatGPTInfo = info;
+    }
+  }
 
   // If a provider switcher wrote ANTHROPIC_BASE_URL into settings.json and the
   // user didn't override --upstream, forward there by default (the plain claude
@@ -192,6 +235,14 @@ async function wrap(command, args, opts) {
   args = proxyArgs(args, provider.envVar, proxyUrl, process.env, upstream);
 
   process.stderr.write(banner(dashUrl, provider, upstream));
+  if (codexChatGPTInfo) {
+    const ep = codexChatGPTInfo.endpoint ? ` (${codexChatGPTInfo.endpoint})` : "";
+    process.stderr.write(
+      `  \x1b[33m⚠\x1b[0m  Codex is using ChatGPT auth${ep}.\n` +
+      `     This websocket transport bypasses OPENAI_BASE_URL — the dashboard will be empty.\n` +
+      `     To capture traffic, switch Codex to API-key mode (OPENAI_API_KEY).\n\n`
+    );
+  }
   if (opts.open) openBrowser(dashUrl);
 
   // Command-line --settings outranks ~/.claude/settings.json and deep-merges
