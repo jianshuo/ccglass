@@ -179,6 +179,20 @@ async function wrap(command, args, opts) {
     process.exit(1);
   }
 
+  try {
+    const parsedUpstream = new URL(upstream);
+    if (parsedUpstream.protocol !== "http:" && parsedUpstream.protocol !== "https:") {
+      throw new Error("bad protocol");
+    }
+  } catch {
+    process.stderr.write(
+      `ccglass: invalid upstream URL: "${upstream}"\n` +
+      `  The URL must start with http:// or https://, e.g. https://api.openai.com\n` +
+      `  Check the value of ${provider.envVar} in your environment, or pass --upstream <url>.\n`
+    );
+    process.exit(1);
+  }
+
   if (provider.mcp && opts.mcp) args = [...mcpArgs(opts), ...args];
 
   const store = new Store({ root: opts.dir, redact: opts.redact, format: provider.format });
