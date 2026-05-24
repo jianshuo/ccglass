@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import crossSpawn from "cross-spawn";
 
 const WINDOWS_SCRIPT_EXTS = new Set([".cmd", ".bat", ".ps1"]);
 
@@ -65,7 +66,10 @@ export function prepareSpawn(command, args, env = process.env, platform = proces
 }
 
 export function spawnCommand(command, args, options) {
-  const prepared = prepareSpawn(command, args, options?.env);
-  const { command: preparedCommand, args: preparedArgs, ...preparedOptions } = prepared;
-  return spawn(preparedCommand, preparedArgs, { ...options, ...preparedOptions });
+  // cross-spawn handles Windows .cmd/.ps1 shim resolution more reliably than
+  // our manual PATH scan (covers edge cases like mixed-case PATH env keys).
+  if (process.platform === "win32") {
+    return crossSpawn(command, args, options);
+  }
+  return spawn(command, args, options);
 }
