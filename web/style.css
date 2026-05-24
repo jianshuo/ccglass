@@ -61,6 +61,15 @@ aside {
 .row .sub .toolcalls { color: var(--cache); }
 .row .seq { color: var(--accent); }
 .pending { color: var(--cache); }
+.status-txt-4xx { color: var(--cache); }
+.status-txt-5xx { color: var(--del); }
+.row.status-4xx { border-left: 3px solid var(--cache); padding-left: 9px; }
+.row.status-5xx { border-left: 3px solid var(--del); padding-left: 9px; }
+.retry-badge { color: var(--muted); }
+.card.err-card { border-color: var(--del); }
+.card.err-card .v { color: var(--del); }
+.card.warn-card { border-color: var(--cache); }
+.card.warn-card .v { color: var(--cache); }
 #detail { flex: 1; overflow-y: auto; padding: 0; }
 .empty { color: var(--muted); padding: 40px; text-align: center; }
 .tabs { display: flex; gap: 2px; padding: 8px 14px 0; position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--border); flex-wrap: wrap; }

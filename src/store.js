@@ -99,6 +99,7 @@ export function summarize(rec) {
     nTools: Array.isArray(b.tools) ? b.tools.length : 0,
     nToolUse,
     status: rec.response?.status ?? null,
+    error: rec.response?.error ?? null,
     pending: !rec.response,
   };
 }

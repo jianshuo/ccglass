@@ -9,7 +9,28 @@ const el = (tag, props = {}, ...kids) => {
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 const fmt = (n) => (n == null ? "—" : n.toLocaleString());
 
-const state = { session: null, live: null, entries: [], selected: null, tab: "overview", diff: false, picks: [] };
+function statusClass(status) {
+  if (status == null) return "pending";
+  if (status < 400) return "ok";
+  if (status < 500) return "4xx";
+  return "5xx";
+}
+
+function groupRetries(entries, windowMs = 60_000) {
+  const out = [];
+  for (const e of entries) {
+    const g = out[out.length - 1];
+    const lastTs = g?.retries?.at(-1)?.ts ?? g?.ts;
+    if (g && g.url === e.url && g.model === e.model && g.nMessages === e.nMessages && (e.ts - lastTs) < windowMs) {
+      g.retries.push(e);
+    } else {
+      out.push({ ...e, retries: [] });
+    }
+  }
+  return out;
+}
+
+const state = { session: null, live: null, entries: [], selected: null, tab: "overview", diff: false, picks: [], errorsOnly: false };
 
 async function api(path) {
   const r = await fetch(path);
@@ -39,18 +60,42 @@ async function loadList() {
   renderList();
 }
 
+function updateErrorsBtn() {
+  const count = state.entries.filter((e) => {
+    const sc = statusClass(e.status);
+    return sc === "4xx" || sc === "5xx" || e.error != null;
+  }).length;
+  const btn = $("#errorsBtn");
+  btn.textContent = `errors (${count})`;
+  btn.classList.toggle("on", state.errorsOnly);
+}
+
 function renderList() {
+  updateErrorsBtn();
   const list = $("#list");
   list.innerHTML = "";
-  for (const e of state.entries) {
-    const row = el("div", { className: "row" });
+  let visible = state.entries;
+  if (state.errorsOnly) {
+    visible = visible.filter((e) => {
+      const sc = statusClass(e.status);
+      return sc === "4xx" || sc === "5xx" || e.error != null;
+    });
+  }
+  const grouped = groupRetries(visible);
+  for (const e of grouped) {
+    const sc = statusClass(e.status);
+    const rowClass = ["row", sc === "4xx" ? "status-4xx" : sc === "5xx" ? "status-5xx" : ""].filter(Boolean).join(" ");
+    const row = el("div", { className: rowClass });
     if (e.id === state.selected) row.classList.add("sel");
     if (state.picks.includes(e.id)) row.classList.add("pick");
+    const statusTxtClass = sc === "4xx" ? "status-txt-4xx" : sc === "5xx" ? "status-txt-5xx" : (e.pending ? "pending" : "");
+    const statusText = e.pending ? "pending…" : "HTTP " + e.status;
     const sub = el("div", { className: "sub" },
       el("span", { className: "time", textContent: e.ts ? new Date(e.ts).toLocaleTimeString() : "" }),
       el("span", { textContent: ` ${e.format ? e.format + " · " : ""}${e.nMessages} msg · ${e.nTools} tools · ` }),
-      el("span", { className: e.pending ? "pending" : "", textContent: e.pending ? "pending…" : "HTTP " + e.status }));
+      el("span", { className: statusTxtClass, textContent: statusText }));
     if (e.nToolUse) sub.append(el("span", { className: "toolcalls", title: "tool calls in this request", textContent: ` 🔧${e.nToolUse}` }));
+    if (e.retries.length) sub.append(el("span", { className: "retry-badge", textContent: ` retried ×${e.retries.length}` }));
     row.append(
       el("div", { className: "top" },
         el("span", { className: "seq", textContent: "#" + e.seq }),
@@ -117,9 +162,18 @@ function overviewHtml(rec, parsed, view) {
   const c = parsed.cost || {};
   const u = parsed.response?.usage || {};
   const body = rec.request?.body || {};
+  const status = rec.response?.status ?? null;
+  const sc = statusClass(status);
   const dl = (f) => `<a class="dl" href="/api/export?id=${encodeURIComponent(rec.id)}&format=${f}">⬇ ${f}</a>`;
+  const statusCardCls = sc === "5xx" ? "err-card" : sc === "4xx" ? "warn-card" : "";
+  const statusCardVal = status != null ? "HTTP " + status : "—";
+  const errBody = parsed.response?.error ?? rec.response?.error ?? null;
+  const errHtml = errBody
+    ? `<div class="block" style="border-color:var(--del)"><div class="h" style="color:var(--del)">error</div><pre style="color:var(--del)">${esc(typeof errBody === "string" ? errBody : JSON.stringify(errBody, null, 2))}</pre></div>`
+    : "";
   return `
     <div class="cards">
+      ${statusCardCls ? card("status", statusCardVal, undefined, statusCardCls) : ""}
       ${card("format", parsed.format || rec.format || "—")}
       ${card("model", body.model || "—")}
       ${card("est. input", "≈" + fmt(parsed.estTokens), "tokens")}
@@ -130,13 +184,14 @@ function overviewHtml(rec, parsed, view) {
       ${card("cost", "$" + (c.usd || 0).toFixed(5))}
       ${card("stop", parsed.response?.stop_reason || "—")}
     </div>
+    ${errHtml}
     <div>${dl("raw")}${dl("md")}${dl("json")}${dl("har")}</div>
     <div class="block"><div class="h">request line</div><pre>${esc(rec.request?.method)} ${esc(rec.request?.url)}</pre></div>
     <p style="color:var(--muted)">${view.system.length} system blocks · ${view.messages.length} messages · ${view.tools.length} tools</p>`;
 }
 
-function card(k, v, sub) {
-  return `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}${sub ? ` <small>${esc(sub)}</small>` : ""}</div></div>`;
+function card(k, v, sub, cls = "") {
+  return `<div class="card${cls ? " " + cls : ""}"><div class="k">${esc(k)}</div><div class="v">${esc(v)}${sub ? ` <small>${esc(sub)}</small>` : ""}</div></div>`;
 }
 
 function blockEl(label, text, tags = "") {
@@ -341,6 +396,7 @@ function connectStream() {
 }
 
 $("#session").onchange = (e) => { state.session = e.target.value; state.picks = []; loadList(); };
+$("#errorsBtn").onclick = () => { state.errorsOnly = !state.errorsOnly; renderList(); };
 $("#diffBtn").onclick = (e) => {
   state.diff = !state.diff;
   state.picks = [];

@@ -46,6 +46,7 @@ export function reassembleResponse(raw) {
   let usage = {};
   let stop_reason = null;
   let model = null;
+  let error;
 
   for (const line of raw.split(/\r?\n/)) {
     if (!line.startsWith("data:")) continue;
@@ -72,6 +73,9 @@ export function reassembleResponse(raw) {
         if (ev.delta?.stop_reason) stop_reason = ev.delta.stop_reason;
         if (ev.usage) usage = { ...usage, ...ev.usage };
         break;
+      case "error":
+        error = ev.error;
+        break;
     }
   }
 
@@ -81,6 +85,7 @@ export function reassembleResponse(raw) {
     stop_reason,
     usage,
     content: blocks.filter(Boolean).map(finalizeBlock),
+    error,
   };
 }
 
