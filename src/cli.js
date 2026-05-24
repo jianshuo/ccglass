@@ -79,7 +79,9 @@ function listen(server, port) {
 
 function openBrowser(url) {
   const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-  spawn(cmd, [url], { stdio: "ignore", detached: true, shell: process.platform === "win32" }).unref();
+  const p = spawn(cmd, [url], { stdio: "ignore", detached: true, shell: process.platform === "win32" });
+  p.on("error", () => {});
+  p.unref();
 }
 
 const banner = (dashUrl, provider, upstream) =>
