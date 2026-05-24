@@ -107,3 +107,64 @@ test("openai.cost subtracts cached tokens from billed input", () => {
 test("getAdapter falls back to anthropic", () => {
   assert.equal(getAdapter("nope"), anthropic);
 });
+
+test("openai.view handles reasoning input items (Responses API)", () => {
+  const body = {
+    input: [
+      {
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "I need to list files." }],
+      },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "list files" }] },
+    ],
+  };
+  const v = openai.view(body);
+  const reasoning = v.messages.find((m) => m.type === "reasoning");
+  assert.ok(reasoning, "reasoning block should be present");
+  assert.match(reasoning.text, /I need to list files/);
+  assert.equal(reasoning.label, "input[0].reasoning");
+  assert.equal(reasoning.role, "assistant");
+});
+
+test("openai.reassemble handles reasoning_summary_text.delta and output_text.done events", () => {
+  const sse = [
+    `data: {"type":"response.created","response":{"model":"gpt-5-codex"}}`,
+    `data: {"type":"response.reasoning_summary_text.delta","delta":"Thinking "}`,
+    `data: {"type":"response.reasoning_summary_text.delta","delta":"step by step."}`,
+    `data: {"type":"response.output_text.delta","delta":"Hello"}`,
+    `data: {"type":"response.output_text.done","output_index":0}`,
+    `data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":50,"output_tokens":10}}}`,
+  ].join("\n");
+  const r = openai.reassemble(sse);
+  const reasoning = r.content.find((c) => c.type === "reasoning");
+  assert.ok(reasoning, "reasoning block should be present");
+  assert.match(reasoning.text, /Thinking step by step/);
+  assert.equal(r.content.find((c) => c.type === "text")?.text, "Hello");
+  assert.equal(r.usage.output_tokens, 10);
+});
+
+test("openai.reassemble handles reasoning blocks in non-streaming Responses API response", () => {
+  const json = JSON.stringify({
+    object: "response",
+    model: "gpt-5-codex",
+    status: "completed",
+    output: [
+      {
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "Let me think." }],
+      },
+      {
+        type: "message",
+        content: [{ type: "output_text", text: "Done." }],
+      },
+    ],
+    usage: { input_tokens: 30, output_tokens: 5 },
+  });
+  const r = openai.reassemble(json);
+  const reasoning = r.content.find((c) => c.type === "reasoning");
+  assert.ok(reasoning, "reasoning block should be present");
+  assert.match(reasoning.text, /Let me think/);
+  assert.equal(r.content.find((c) => c.type === "text")?.text, "Done.");
+});
