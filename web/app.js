@@ -83,13 +83,13 @@ function renderList() {
   }
   const grouped = groupRetries(visible);
   for (const e of grouped) {
-    const sc = statusClass(e.status);
+    const sc = e.error ? "5xx" : statusClass(e.status);
     const rowClass = ["row", sc === "4xx" ? "status-4xx" : sc === "5xx" ? "status-5xx" : ""].filter(Boolean).join(" ");
     const row = el("div", { className: rowClass });
     if (e.id === state.selected) row.classList.add("sel");
     if (state.picks.includes(e.id)) row.classList.add("pick");
     const statusTxtClass = sc === "4xx" ? "status-txt-4xx" : sc === "5xx" ? "status-txt-5xx" : (e.pending ? "pending" : "");
-    const statusText = e.pending ? "pending…" : "HTTP " + e.status;
+    const statusText = e.error ? "transport error" : (e.pending ? "pending…" : "HTTP " + e.status);
     const sub = el("div", { className: "sub" },
       el("span", { className: "time", textContent: e.ts ? new Date(e.ts).toLocaleTimeString() : "" }),
       el("span", { textContent: ` ${e.format ? e.format + " · " : ""}${e.nMessages} msg · ${e.nTools} tools · ` }),
