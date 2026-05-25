@@ -2,7 +2,7 @@
 
 **Status**: Bug report + proposed fix
 **Affected versions**: 0.3.1 (current); likely all versions since Bedrock provider was added
-**Affected users**: anyone running Claude Code in Bedrock mode (`CLAUDE_CODE_USE_BEDROCK=1`) — including AWS Bedrock proper, AWS-fronted gateways, and Bedrock-compat enterprise gateways like MediaTek's `mlop-azure-gateway`
+**Affected users**: anyone running Claude Code in Bedrock mode (`CLAUDE_CODE_USE_BEDROCK=1`) — including AWS Bedrock proper, AWS-fronted gateways, and Bedrock-compat enterprise gateways like some company's `company-azure-gateway`
 
 ## Summary
 

@@ -264,6 +264,22 @@ async function wrap(command, args, opts) {
       `     To capture traffic, switch Codex to API-key mode (OPENAI_API_KEY).\n\n`
     );
   }
+  // Direct AWS Bedrock signs requests with SigV4, which covers the Host header.
+  // A reverse proxy rewrites Host before forwarding, so AWS rejects with a
+  // signature mismatch. The fix only works with Bedrock-compat gateways that
+  // don't sign on Host (bearer tokens, mTLS, etc.).
+  if (provider.envVar === "ANTHROPIC_BEDROCK_BASE_URL") {
+    try {
+      const host = new URL(upstream).hostname;
+      if (host.endsWith(".amazonaws.com")) {
+        process.stderr.write(
+          `  \x1b[33m⚠\x1b[0m  Direct AWS Bedrock (${host}) uses SigV4 signing that includes the Host header.\n` +
+          `     ccglass rewrites Host when forwarding, so AWS will reject the proxied request.\n` +
+          `     Point ANTHROPIC_BEDROCK_BASE_URL at a Bedrock-compat gateway in front of AWS instead.\n\n`
+        );
+      }
+    } catch {}
+  }
   if (opts.open) openBrowser(dashUrl);
 
   // Command-line --settings outranks ~/.claude/settings.json and deep-merges

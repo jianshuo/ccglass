@@ -76,7 +76,7 @@ pinning.
 - **Ollama / LM Studio** — no key needed for local models; pass `--upstream` if your server runs on a non-default address.
 - **OpenRouter** — set `OPENAI_API_KEY` to your OpenRouter key.
 - **GLM/Zhipu** — set `OPENAI_BASE_URL` to your Zhipu endpoint (e.g. `https://open.bigmodel.cn/api/paas/v4`) and `OPENAI_API_KEY` to your Zhipu key.
-- **AWS Bedrock** — set `ANTHROPIC_BEDROCK_BASE_URL` to your Bedrock runtime endpoint (e.g. `https://bedrock-runtime.us-east-1.amazonaws.com`) before running; AWS credentials are forwarded as-is from your environment. (Claude Code in Bedrock mode reads its endpoint from this var, not `ANTHROPIC_BASE_URL`.)
+- **AWS Bedrock** — set `ANTHROPIC_BEDROCK_BASE_URL` to your Bedrock endpoint before running. Claude Code in Bedrock mode reads its endpoint from this var (not `ANTHROPIC_BASE_URL`). Works against Bedrock-compat gateways (bearer / mTLS auth). Direct AWS endpoints (`*.amazonaws.com`) will fail through the proxy because SigV4 signs the Host header — ccglass prints a warning if it detects this.
 - **Google Vertex AI** — set `ANTHROPIC_BASE_URL` to your Vertex AI endpoint (e.g. `https://us-east5-aiplatform.googleapis.com`) before running; GCP credentials are forwarded as-is.
 
 ### Custom provider recipe

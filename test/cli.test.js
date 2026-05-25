@@ -56,9 +56,13 @@ test("bedrock keys off ANTHROPIC_BEDROCK_BASE_URL, not ANTHROPIC_BASE_URL", asyn
   // the child silently ignores it and the proxy captures nothing. Setting only
   // ANTHROPIC_BASE_URL must NOT be enough to satisfy the bedrock provider, and
   // the missing-var error must name the correct key so users can fix it.
-  const env = { ...process.env };
-  delete env.ANTHROPIC_BEDROCK_BASE_URL;
-  env.ANTHROPIC_BASE_URL = "https://api.anthropic.com";
+  // Note: run() does `{ ...process.env, ...env }`, so `delete env.X` won't
+  // remove X when the caller's environment has it set. Use an empty-string
+  // override to actually clear it for the child.
+  const env = {
+    ANTHROPIC_BEDROCK_BASE_URL: "",
+    ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+  };
 
   const { code, stderr } = await run(["bedrock"], env);
 
