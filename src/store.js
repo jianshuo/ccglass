@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import { packRecord, unpackRecord } from "./blobs.js";
+import { packRecord, unpackRecord, gcBlobs } from "./blobs.js";
 
 const mask = (v) =>
   String(v)
@@ -288,4 +288,10 @@ export function readEntryById(root, id) {
   const file = path.join(root, parts.session, `${parts.seq}.json`);
   if (!fs.existsSync(file)) return null;
   return readRecordFile(file, id, root);
+}
+
+/** Delete a session directory under `root`, then GC now-orphaned blobs. */
+export function rmSession(root, session) {
+  fs.rmSync(path.join(root, session), { recursive: true, force: true });
+  gcBlobs(root, listSessions, (r, s) => path.join(r, s));
 }

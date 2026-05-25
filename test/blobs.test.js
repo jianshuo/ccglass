@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { writeBlob, readBlob, blobPath, packRecord, unpackRecord } from "../src/blobs.js";
+import { Store, rmSession, listSessions } from "../src/store.js";
 
 const tmpRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-blob-"));
 
@@ -88,4 +89,31 @@ test("pack -> unpack preserves request method and url", () => {
   assert.equal(out.request.method, "POST");
   assert.equal(out.request.url, "/v1/messages");
   assert.deepEqual(out, rec); // still fully lossless
+});
+
+test("rmSession deletes the session and GCs only orphaned blobs", () => {
+  const root = tmpRoot();
+  const shared = { role: "user", content: "shared" };
+  const mk = (uniqueText) => ({
+    request: { method: "POST", url: "/v1/messages", headers: {},
+      body: { model: "m", tools: [], messages: [shared, { role: "user", content: uniqueText }] } },
+  });
+
+  const a = new Store({ root });
+  const ra = a.add(mk("only-A")); ra.response = { status: 200 }; a.update(ra);
+  const sharedRef = JSON.parse(
+    fs.readFileSync(path.join(root, a.sessionId, "0001.json"), "utf8")
+  ).request.messages[0];
+
+  const b = new Store({ root });
+  b.sessionId = a.sessionId + "-B";
+  b.sessionDir = path.join(root, b.sessionId);
+  fs.mkdirSync(b.sessionDir, { recursive: true });
+  const rb = b.add(mk("only-B")); rb.response = { status: 200 }; b.update(rb);
+
+  rmSession(root, a.sessionId);
+
+  assert.ok(!listSessions(root).includes(a.sessionId));
+  assert.ok(listSessions(root).includes(b.sessionId));
+  assert.ok(fs.existsSync(blobPath(root, sharedRef)));
 });

@@ -76,6 +76,49 @@ function safeBlob(root, ref) {
   }
 }
 
+// Collect every blob ref a v2 manifest points at.
+export function collectRefs(manifest, used) {
+  const r = manifest.request || {};
+  if (r.system) used.add(r.system);
+  if (r.tools) used.add(r.tools);
+  for (const ref of r.messages || []) used.add(ref);
+}
+
+// Mark-and-sweep: delete blobs not referenced by any remaining v2 manifest under
+// `root`. `listSessions` lists session dir names; `sessionDir(root, name)` builds
+// a session directory path. (Both injected to avoid a store<->blobs import cycle.)
+export function gcBlobs(root, listSessions, sessionDir) {
+  const used = new Set();
+  for (const s of listSessions(root)) {
+    const dir = sessionDir(root, s);
+    let files;
+    try {
+      files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      let m;
+      try {
+        m = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+      } catch {
+        continue;
+      }
+      if (m && m.v === 2) collectRefs(m, used);
+    }
+  }
+  const blobsDir = path.join(root, "blobs");
+  if (!fs.existsSync(blobsDir)) return;
+  for (const shard of fs.readdirSync(blobsDir)) {
+    const shardDir = path.join(blobsDir, shard);
+    for (const bf of fs.readdirSync(shardDir)) {
+      if (!bf.endsWith(".json")) continue;
+      const ref = `sha256:${bf.replace(/\.json$/, "")}`;
+      if (!used.has(ref)) fs.rmSync(path.join(shardDir, bf), { force: true });
+    }
+  }
+}
+
 // Reassemble the exact original full record from a v2 manifest.
 export function unpackRecord(root, manifest) {
   const r = manifest.request || {};
