@@ -106,3 +106,19 @@ test("ccglass rm deletes a session directory", async () => {
   assert.ok(!fs.existsSync(dir));
 });
 
+test("ccglass repack migrates a legacy v1 capture to v2", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-repackcli-"));
+  const session = "2020-03-03T00-00-00-000Z";
+  const dir = path.join(root, session);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "0001.json");
+  fs.writeFileSync(file, JSON.stringify({
+    id: `${session}/0001`, session, seq: 1, ts: 1, format: "anthropic",
+    request: { headers: {}, body: { model: "m", messages: [{ role: "user", content: "hi" }], tools: [] } },
+    response: { status: 200 },
+  }));
+  const { code } = await run(["repack", "--dir", root]);
+  assert.equal(code, 0);
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).v, 2);
+});
+

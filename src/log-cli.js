@@ -79,11 +79,19 @@ export function repack(opts) {
 export function rmCmd(session, opts) {
   if (!session) {
     process.stderr.write("ccglass rm: usage: ccglass rm <session>\n");
-    process.exitCode = 1;
-    return;
+    process.exit(1);
   }
+  if (session !== path.basename(session) || session === "." || session === "..") {
+    process.stderr.write(`ccglass rm: invalid session: ${session}\n`);
+    process.exit(1);
+  }
+  let removed = 0;
   for (const root of opts.readRoots) {
-    if (fs.existsSync(path.join(root, session))) rmSession(root, session);
+    if (fs.existsSync(path.join(root, session))) { rmSession(root, session); removed++; }
+  }
+  if (!removed) {
+    process.stderr.write(`ccglass rm: session not found: ${session}\n`);
+    process.exit(1);
   }
   process.stdout.write(`ccglass: removed ${session}\n`);
 }
