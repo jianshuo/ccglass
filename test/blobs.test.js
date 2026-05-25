@@ -91,6 +91,24 @@ test("pack -> unpack preserves request method and url", () => {
   assert.deepEqual(out, rec); // still fully lossless
 });
 
+test("pack -> unpack is lossless for a raw string body", () => {
+  const root = tmpRoot();
+  const rec = makeRec("this is not json");
+  assert.deepEqual(unpackRecord(root, packRecord(root, rec)), rec);
+});
+
+test("pack -> unpack is lossless for a null body", () => {
+  const root = tmpRoot();
+  const rec = makeRec(null);
+  assert.deepEqual(unpackRecord(root, packRecord(root, rec)), rec);
+});
+
+test("pack -> unpack is lossless for an array body", () => {
+  const root = tmpRoot();
+  const rec = makeRec([{ a: 1 }, "x"]);
+  assert.deepEqual(unpackRecord(root, packRecord(root, rec)), rec);
+});
+
 test("rmSession deletes the session and GCs only orphaned blobs", () => {
   const root = tmpRoot();
   const shared = { role: "user", content: "shared" };

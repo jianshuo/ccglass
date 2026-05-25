@@ -43,9 +43,26 @@ const HISTORY_KEYS = ["messages", "input"];
 // pieces (system, tools, each history message) become blob refs; everything small
 // (model, params, headers, response) stays inline.
 export function packRecord(root, rec) {
-  const body = (rec.request && rec.request.body) || {};
-  const historyKey = HISTORY_KEYS.find((k) => Array.isArray(body[k])) || null;
+  // Preserve the full request envelope (method, url, headers, …) minus the body,
+  // which is split into meta + blob refs below (or stored raw, see below).
+  const reqEnvelope = { ...(rec.request || {}) };
+  const body = reqEnvelope.body;
+  delete reqEnvelope.body;
 
+  const base = {
+    v: 2,
+    id: rec.id, session: rec.session, seq: rec.seq, ts: rec.ts, format: rec.format,
+    response: rec.response ?? null,
+  };
+
+  // Raw body: proxy stores non-JSON payloads as strings and empty bodies as null/array.
+  // These can't be split into meta+blobs — store verbatim.
+  const isObjBody = body !== null && typeof body === "object" && !Array.isArray(body);
+  if (!isObjBody) {
+    return { ...base, request: { ...reqEnvelope, rawBody: body ?? null } };
+  }
+
+  const historyKey = HISTORY_KEYS.find((k) => Array.isArray(body[k])) || null;
   const meta = { ...body };
   delete meta.system;
   delete meta.tools;
@@ -55,17 +72,7 @@ export function packRecord(root, rec) {
   const tools = Array.isArray(body.tools) ? writeBlob(root, body.tools) : null;
   const messages = historyKey ? body[historyKey].map((m) => writeBlob(root, m)) : [];
 
-  // Preserve the full request envelope (method, url, headers, …) minus the body,
-  // which is split into meta + blob refs below.
-  const reqEnvelope = { ...(rec.request || {}) };
-  delete reqEnvelope.body;
-
-  return {
-    v: 2,
-    id: rec.id, session: rec.session, seq: rec.seq, ts: rec.ts, format: rec.format,
-    request: { ...reqEnvelope, meta, historyKey, system, tools, messages },
-    response: rec.response ?? null,
-  };
+  return { ...base, request: { ...reqEnvelope, meta, historyKey, system, tools, messages } };
 }
 
 function safeBlob(root, ref) {
@@ -132,6 +139,15 @@ export function gcBlobs(root, listSessions, sessionDir) {
 // Reassemble the exact original full record from a v2 manifest.
 export function unpackRecord(root, manifest) {
   const r = manifest.request || {};
+  if ("rawBody" in r) {
+    const { rawBody, ...envelope } = r;
+    return {
+      id: manifest.id, session: manifest.session, seq: manifest.seq,
+      ts: manifest.ts, format: manifest.format,
+      request: { ...envelope, body: rawBody },
+      response: manifest.response ?? null,
+    };
+  }
   const { meta, historyKey, system, tools, messages, ...envelope } = r;
   // Key order is normalized here: the reconstructed body lists meta scalars first,
   // then system/tools/history — not the original insertion order. This is deepEqual-safe,
