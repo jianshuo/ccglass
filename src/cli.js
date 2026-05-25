@@ -9,11 +9,12 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { proxyArgs } from "./child-args.js";
 import { spawnCommand } from "./spawn-command.js";
-import { Store, readEntryById } from "./store.js";
+import { Store, hasCapturedLogs } from "./store.js";
+import { exportEntry, migrate } from "./log-cli.js";
 import { createProxy } from "./proxy.js";
 import { createServer } from "./server.js";
 import { resolveProvider, PROVIDERS, PICKABLE } from "./providers.js";
-import { renderExport } from "./export.js";
+import { globalRoot, legacyRoot, readRoots } from "./paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")).version;
@@ -28,7 +29,8 @@ USAGE
   ccglass kimi   [args...]      Inspect Kimi (Moonshot, via Claude Code)
   ccglass opencode [args...]    Inspect OpenCode
   ccglass run [--provider P] -- <cmd...>   Inspect any client
-  ccglass view                  Open the dashboard over existing .ccglass/ logs
+  ccglass view                  Open the dashboard over saved logs
+  ccglass migrate               Copy ./.ccglass logs (this project only) to the global store
   ccglass export <id> [--format raw|md|json|har]
 
 OPTIONS
@@ -39,7 +41,7 @@ OPTIONS
   --base-url <url>    Alias for --upstream
   --port <n>          Dashboard port (default: auto)
   --proxy-port <n>    Proxy port (default: auto)
-  --dir <path>        Log directory (default: ./.ccglass)
+  --dir <path>        Log directory (default: ~/.ccglass/sessions/<full-path>-<hash>)
   --no-open           Do NOT open the dashboard in your browser (opens by default)
   --no-redact         Do NOT mask auth tokens in saved logs
   --no-mcp            Do NOT inject ccglass's inspection tools into Claude Code
@@ -58,12 +60,12 @@ EXAMPLES
   ccglass run --provider ollama -- my-openai-cli
   ccglass run --provider openrouter -- my-openai-cli
   ccglass run --provider glm -- my-openai-cli     # set OPENAI_BASE_URL first
-  ccglass run --provider bedrock -- claude        # set ANTHROPIC_BASE_URL first
+  ccglass run --provider bedrock -- claude        # set ANTHROPIC_BEDROCK_BASE_URL first
   ccglass run --upstream https://my.api/v1 --env-var MY_BASE_URL -- my-tool
   ccglass export <id> --format raw > request.http`;
 
 function parseArgs(argv) {
-  const opts = { dir: path.resolve(".ccglass"), redact: true, mcp: true, open: true, settingsOverride: true };
+  const opts = { dir: null, redact: true, mcp: true, open: true, settingsOverride: true };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -123,14 +125,28 @@ function pickProvider() {
 // session without touching the user's persistent config. When inspecting a
 // Claude-based client, point it at our own stdio MCP (src/mcp.js) so the agent
 // can query the very requests it just made. CCGLASS_ROOT must match this run's
-// log dir, or the MCP would read a stale ./.ccglass instead.
+// log dir, or the MCP would read a stale store instead.
+function maybeLegacyHint(cwd, captureDir) {
+  const legacy = legacyRoot(cwd);
+  if (!hasCapturedLogs(legacy)) return;
+  if (hasCapturedLogs(captureDir)) return;
+  process.stderr.write(
+    `  \x1b[33mnote:\x1b[0m found logs in ./.ccglass (this project directory only).\n` +
+    `        This run saves new captures under ${captureDir}\n` +
+    `        Run \`ccglass migrate\` to copy ./.ccglass from the current directory into that store.\n`
+  );
+}
+
 function mcpArgs(opts) {
   const config = {
     mcpServers: {
       ccglass: {
         command: process.execPath,
         args: [path.join(__dirname, "mcp.js")],
-        env: { CCGLASS_ROOT: opts.dir },
+        env: {
+          CCGLASS_ROOT: opts.dir,
+          CCGLASS_CWD: process.cwd(),
+        },
       },
     },
   };
@@ -170,7 +186,6 @@ function detectCodexChatGPTAuth() {
   });
 }
 
-
 // Read model_providers.*.base_url from ~/.codex/config.toml. Codex prioritizes
 // config.toml over OPENAI_BASE_URL, so we must read the configured upstream from
 // there and override it via -c flag when spawning codex.
@@ -181,11 +196,13 @@ function codexConfigBaseUrl() {
   const m = toml.match(/^\[model_providers\.(\S+)\][^\[]*?^base_url\s*=\s*"([^"]+)"/m);
   return m ? { provider: m[1], baseUrl: m[2] } : null;
 }
-// Read ANTHROPIC_BASE_URL from Claude Code's settings.json env block. A provider
-// switcher (cc-switch etc.) writes the active provider's base URL here, which
-// otherwise makes claude bypass our proxy. Project settings shadow user settings
-// in Claude Code's precedence, so check them in the same order.
-function settingsEnvBaseUrl() {
+// Read the provider's base-URL env var from Claude Code's settings.json env
+// block. A provider switcher (cc-switch etc.) writes the active provider's base
+// URL here, which otherwise makes claude bypass our proxy. Project settings
+// shadow user settings in Claude Code's precedence, so check them in the same
+// order. The env var differs by mode: ANTHROPIC_BASE_URL for vanilla Claude,
+// ANTHROPIC_BEDROCK_BASE_URL when CLAUDE_CODE_USE_BEDROCK=1, etc.
+function settingsEnvBaseUrl(envVar) {
   const files = [
     path.resolve(".claude/settings.local.json"),
     path.resolve(".claude/settings.json"),
@@ -193,7 +210,7 @@ function settingsEnvBaseUrl() {
   ];
   for (const f of files) {
     try {
-      const url = JSON.parse(fs.readFileSync(f, "utf8"))?.env?.ANTHROPIC_BASE_URL;
+      const url = JSON.parse(fs.readFileSync(f, "utf8"))?.env?.[envVar];
       if (url) return url;
     } catch {}
   }
@@ -217,7 +234,7 @@ async function wrap(command, args, opts) {
   // If a provider switcher wrote ANTHROPIC_BASE_URL into settings.json and the
   // user didn't override --upstream, forward there by default (the plain claude
   // provider's default upstream is anthropic.com; kimi etc. keep their own).
-  const settingsBaseUrl = claudeBased ? settingsEnvBaseUrl() : null;
+  const settingsBaseUrl = claudeBased ? settingsEnvBaseUrl(provider.envVar) : null;
   const codexBased = provider.command === "codex" && !provider.autoUpstream;
   const codexConfig = codexBased ? codexConfigBaseUrl() : null;
   let upstream = opts.upstream
@@ -225,12 +242,24 @@ async function wrap(command, args, opts) {
     || (provider.upstream === "auto" ? null : provider.upstream);
   // autoUpstream: resolve upstream from the same env var we're about to override
   if (!upstream && provider.autoUpstream) upstream = process.env[provider.envVar];
-  if (!opts.upstream && settingsBaseUrl && provider.upstream === "https://api.anthropic.com") {
+  // Picking the upstream from settings.json covers two cases: vanilla Claude
+  // (default upstream is anthropic.com, switchers write ANTHROPIC_BASE_URL) and
+  // autoUpstream providers like bedrock/vertex (no fixed upstream — settings.json
+  // is often where the user's gateway URL lives).
+  if (!opts.upstream && settingsBaseUrl && (provider.upstream === "https://api.anthropic.com" || provider.autoUpstream)) {
     upstream = settingsBaseUrl;
     process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from Claude Code settings.json → ${upstream}\n`);
   }
   if (!opts.upstream && codexConfig) {
     process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from Codex config.toml → ${codexConfig.baseUrl}\n`);
+  }
+  // A provider switcher (e.g. cc-switch) may have set ANTHROPIC_BASE_URL directly in the
+  // environment rather than in settings.json — pick it up so the proxy forwards to the
+  // right third-party API instead of defaulting to api.anthropic.com.
+  if (!opts.upstream && !settingsBaseUrl && claudeBased && process.env[provider.envVar] &&
+      provider.upstream === "https://api.anthropic.com") {
+    upstream = process.env[provider.envVar];
+    process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from ${provider.envVar} env → ${upstream}\n`);
   }
 
   if (!upstream) {
@@ -257,9 +286,11 @@ async function wrap(command, args, opts) {
 
   if (provider.mcp && opts.mcp) args = [...mcpArgs(opts), ...args];
 
+  maybeLegacyHint(process.cwd(), opts.dir);
+
   const store = new Store({ root: opts.dir, redact: opts.redact, format: provider.format });
   const proxy = createProxy({ upstream, store });
-  const dashboard = createServer({ root: opts.dir, store });
+  const dashboard = createServer({ roots: opts.readRoots, store });
 
   const proxyPort = await listen(proxy, opts.proxyPort);
   const dashPort = await listen(dashboard, opts.port);
@@ -276,6 +307,22 @@ async function wrap(command, args, opts) {
       `     To capture traffic, switch Codex to API-key mode (OPENAI_API_KEY).\n\n`
     );
   }
+  // Direct AWS Bedrock signs requests with SigV4, which covers the Host header.
+  // A reverse proxy rewrites Host before forwarding, so AWS rejects with a
+  // signature mismatch. The fix only works with Bedrock-compat gateways that
+  // don't sign on Host (bearer tokens, mTLS, etc.).
+  if (provider.envVar === "ANTHROPIC_BEDROCK_BASE_URL") {
+    try {
+      const host = new URL(upstream).hostname;
+      if (host.endsWith(".amazonaws.com")) {
+        process.stderr.write(
+          `  \x1b[33m⚠\x1b[0m  Direct AWS Bedrock (${host}) uses SigV4 signing that includes the Host header.\n` +
+          `     ccglass rewrites Host when forwarding, so AWS will reject the proxied request.\n` +
+          `     Point ANTHROPIC_BEDROCK_BASE_URL at a Bedrock-compat gateway in front of AWS instead.\n\n`
+        );
+      }
+    } catch {}
+  }
   if (opts.open) openBrowser(dashUrl);
 
   // Command-line --settings outranks ~/.claude/settings.json and deep-merges
@@ -284,8 +331,8 @@ async function wrap(command, args, opts) {
   // the env-var precedence regression in some Claude Code versions.
   if (claudeBased && opts.settingsOverride && !provider.noSettings) {
     if (settingsBaseUrl)
-      process.stderr.write(`  \x1b[33mnote:\x1b[0m settings.json sets ANTHROPIC_BASE_URL=${settingsBaseUrl}; overriding it so claude hits the proxy\n`);
-    args = ["--settings", JSON.stringify({ env: { ANTHROPIC_BASE_URL: proxyUrl } }), ...args];
+      process.stderr.write(`  \x1b[33mnote:\x1b[0m settings.json sets ${provider.envVar}=${settingsBaseUrl}; overriding it so claude hits the proxy\n`);
+    args = ["--settings", JSON.stringify({ env: { [provider.envVar]: proxyUrl } }), ...args];
   }
 
   // Codex config.toml base_url outranks OPENAI_BASE_URL. Override it via -c
@@ -333,34 +380,34 @@ async function wrap(command, args, opts) {
 }
 
 async function view(opts) {
-  if (!fs.existsSync(opts.dir)) {
-    process.stderr.write(`ccglass: no logs found at ${opts.dir}. Run \`ccglass\` first.\n`);
+  const hasAny = opts.readRoots.some((r) => fs.existsSync(r));
+  if (!hasAny) {
+    process.stderr.write(`ccglass: no logs found. Run \`ccglass\` first.\n`);
     process.exit(1);
   }
-  const dashboard = createServer({ root: opts.dir, store: null });
+  const dashboard = createServer({ roots: opts.readRoots, store: null });
   const dashPort = await listen(dashboard, opts.port);
   const dashUrl = `http://127.0.0.1:${dashPort}`;
   process.stderr.write(`\n  \x1b[36m●\x1b[0m ccglass dashboard: \x1b[1m${dashUrl}\x1b[0m  (viewing saved logs — Ctrl-C to stop)\n`);
   if (opts.open) openBrowser(dashUrl);
 }
 
-function exportEntry(id, opts) {
-  const rec = readEntryById(opts.dir, id);
-  if (!rec) {
-    process.stderr.write(`ccglass: no entry ${id} under ${opts.dir}\n`);
-    process.exit(1);
-  }
-  process.stdout.write(renderExport(rec, opts.format || "raw").body + "\n");
-}
+export { exportEntry, migrate } from "./log-cli.js";
 
 export async function main(argv) {
   const { opts, rest } = parseArgs(argv);
+  const cwd = process.cwd();
+
+  if (!opts.dir) opts.dir = globalRoot(cwd);
+  opts.readRoots = readRoots(opts.dir, cwd);
+
   const cmd = rest[0];
 
   if (rest.includes("-h") || rest.includes("--help")) return void process.stdout.write(HELP + "\n");
   if (rest.includes("-v") || rest.includes("--version")) return void process.stdout.write(VERSION + "\n");
 
   if (cmd === "view") return view(opts);
+  if (cmd === "migrate") return migrate(opts);
   if (cmd === "export") return exportEntry(rest[1], opts);
   if (cmd === "run") {
     const dashIdx = rest.indexOf("--");

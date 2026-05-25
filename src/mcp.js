@@ -1,17 +1,18 @@
-// ccglass MCP server: exposes the captured request/response logs in .ccglass/
-// to any MCP client (e.g. Claude Code) as read-only query tools. This lets the
-// agent inspect what it actually sent to the model — sessions, request
-// summaries, full prompts, and token/cost rollups — without leaving the chat.
+// ccglass MCP server: exposes the captured request/response logs to any MCP
+// client (e.g. Claude Code) as read-only query tools. This lets the agent
+// inspect what it actually sent to the model — sessions, request summaries,
+// full prompts, and token/cost rollups — without leaving the chat.
 //
-// Run: node src/mcp.js   (root resolved from $CCGLASS_ROOT or ./.ccglass)
+// Run: node src/mcp.js   (root resolved from $CCGLASS_ROOT or global path)
 
 import path from "node:path";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { listSessions, loadSession, summarize, readEntryById } from "./store.js";
+import { listSessionsMulti, loadSessionMulti, summarize, readEntryByIdMulti } from "./store.js";
 import { getAdapter, detectFormat } from "./formats/index.js";
+import { globalRoot, readRoots } from "./paths.js";
 
 // Parse one captured record's streamed response into { usage, cost } using the
 // same per-format adapter the dashboard uses (Anthropic / OpenAI / DeepSeek…).
@@ -22,12 +23,15 @@ function priceOf(rec) {
   return { usage, cost: adapter.cost(rec.request?.body?.model, usage), reassembled: resp };
 }
 
+const CWD = process.env.CCGLASS_CWD
+  ? path.resolve(process.env.CCGLASS_CWD)
+  : process.cwd();
+
 const ROOT = process.env.CCGLASS_ROOT
   ? path.resolve(process.env.CCGLASS_ROOT)
-  : path.resolve(process.cwd(), ".ccglass");
+  : globalRoot(CWD);
 
-// Latest session = most recent directory name (listSessions returns desc).
-const latestSession = () => listSessions(ROOT)[0] || null;
+const ROOTS = readRoots(ROOT, CWD);
 
 const usd = (n) => `$${n.toFixed(4)}`;
 const json = (data) => ({ content: [{ type: "text", text: JSON.stringify(data, null, 2) }] });
@@ -43,8 +47,8 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
-    const sessions = listSessions(ROOT).map((s) => {
-      const recs = loadSession(ROOT, s);
+    const sessions = listSessionsMulti(ROOTS).map((s) => {
+      const recs = loadSessionMulti(ROOTS, s);
       let cost = 0;
       for (const r of recs) cost += priceOf(r).cost.usd || 0;
       const ts = recs.map((r) => r.ts).filter(Boolean);
@@ -72,9 +76,9 @@ server.registerTool(
     },
   },
   async ({ session, limit = 20 }) => {
-    const sess = session || latestSession();
+    const sess = session || listSessionsMulti(ROOTS)[0];
     if (!sess) return json({ error: "no sessions found", root: ROOT });
-    const rows = loadSession(ROOT, sess).map(summarize).slice(-limit).reverse();
+    const rows = loadSessionMulti(ROOTS, sess).map(summarize).slice(-limit).reverse();
     return json({ session: sess, count: rows.length, requests: rows });
   },
 );
@@ -90,7 +94,7 @@ server.registerTool(
     },
   },
   async ({ id }) => {
-    const rec = readEntryById(ROOT, id);
+    const rec = readEntryByIdMulti(ROOTS, id);
     if (!rec) return json({ error: "not found", id });
     const b = rec.request?.body || {};
     const sys = Array.isArray(b.system)

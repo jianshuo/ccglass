@@ -105,11 +105,14 @@ export const PROVIDERS = {
     label: "AWS Bedrock (via Claude Code)",
     command: "claude",
     format: "anthropic",
-    envVar: "ANTHROPIC_BASE_URL",
+    // Bedrock mode (CLAUDE_CODE_USE_BEDROCK=1) reads its endpoint from
+    // ANTHROPIC_BEDROCK_BASE_URL, not ANTHROPIC_BASE_URL — otherwise the
+    // proxy is silently bypassed.
+    envVar: "ANTHROPIC_BEDROCK_BASE_URL",
     upstream: "auto",
     autoUpstream: true,
     mcp: true,
-    note: "Bedrock: set ANTHROPIC_BASE_URL to your Bedrock endpoint before running (e.g. https://bedrock-runtime.us-east-1.amazonaws.com). AWS credentials are forwarded as-is.",
+    note: "Bedrock: set ANTHROPIC_BEDROCK_BASE_URL to your Bedrock endpoint before running (e.g. https://bedrock-runtime.us-east-1.amazonaws.com). AWS credentials are forwarded as-is.",
   },
   vertex: {
     label: "Google Vertex AI (via Claude Code)",
