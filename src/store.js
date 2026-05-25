@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
+import { packRecord } from "./blobs.js";
 
 const mask = (v) =>
   String(v)
@@ -53,15 +54,21 @@ export class Store extends EventEmitter {
       request: { ...request, headers: this._maskHeaders(request.headers) },
       response: null,
     };
-    fs.writeFileSync(this._file(seq), JSON.stringify(rec, null, 2));
+    this._persist(rec);
     this.entries.push(rec);
     this.emit("entry", rec);
     return rec;
   }
 
   update(rec) {
-    fs.writeFileSync(this._file(rec.seq), JSON.stringify(rec, null, 2));
+    this._persist(rec);
     this.emit("update", rec);
+  }
+
+  // Write the v2 manifest (request content split into content-addressed blobs).
+  _persist(rec) {
+    const manifest = packRecord(this.root, rec);
+    fs.writeFileSync(this._file(rec.seq), JSON.stringify(manifest, null, 2));
   }
 
   list() {

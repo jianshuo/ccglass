@@ -317,3 +317,28 @@ test("readEntryByIdMulti prefers the newer duplicate across roots", () => {
   fs.rmSync(a, { recursive: true, force: true });
   fs.rmSync(b, { recursive: true, force: true });
 });
+
+test("Store writes a v2 manifest with blob refs; in-memory rec stays full", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-v2-"));
+  const store = new Store({ root });
+  const rec = store.add({
+    request: {
+      method: "POST", url: "/v1/messages",
+      headers: { authorization: "Bearer sk-ant-oat01-SECRETSECRETSECRET-TAIL" },
+      body: { model: "m", messages: [{ role: "user", content: "hi" }], tools: [] },
+    },
+  });
+  rec.response = { status: 200, raw: "ok" };
+  store.update(rec);
+
+  const seqFile = path.join(root, store.sessionId, "0001.json");
+  const onDisk = JSON.parse(fs.readFileSync(seqFile, "utf8"));
+  assert.equal(onDisk.v, 2);
+  assert.ok(Array.isArray(onDisk.request.messages));
+  assert.match(onDisk.request.messages[0], /^sha256:/);
+  assert.equal(onDisk.request.body, undefined);
+
+  assert.deepEqual(rec.request.body.messages, [{ role: "user", content: "hi" }]);
+
+  assert.ok(fs.existsSync(path.join(root, "blobs")));
+});
