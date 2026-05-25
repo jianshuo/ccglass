@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { writeBlob, readBlob, blobPath } from "../src/blobs.js";
-import { packRecord, unpackRecord } from "../src/blobs.js";
+import { writeBlob, readBlob, blobPath, packRecord, unpackRecord } from "../src/blobs.js";
 
 const tmpRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-blob-"));
 

@@ -81,6 +81,10 @@ function safeBlob(root, ref) {
 // Reassemble the exact original full record from a v2 manifest.
 export function unpackRecord(root, manifest) {
   const r = manifest.request || {};
+  // Key order is normalized here: the reconstructed body lists meta scalars first,
+  // then system/tools/history — not the original insertion order. This is deepEqual-safe,
+  // but do NOT JSON.stringify-fingerprint the reconstructed body expecting byte-identical
+  // key order to the original.
   const body = { ...(r.meta || {}) };
   if (r.system != null) body.system = safeBlob(root, r.system);
   if (r.tools != null) body.tools = safeBlob(root, r.tools);
