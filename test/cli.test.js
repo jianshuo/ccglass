@@ -50,6 +50,14 @@ test("codex-azure exits with code 1 and a clear error when AZURE_OPENAI_ENDPOINT
   assert.match(stderr, /--upstream/);
 });
 
+test("claude uses ANTHROPIC_BASE_URL env var as upstream (invalid URL triggers clear error)", async () => {
+  const { code, stderr } = await run(["claude"], { ANTHROPIC_BASE_URL: "not-a-valid-url" });
+
+  assert.equal(code, 1);
+  assert.match(stderr, /invalid upstream URL/);
+  assert.match(stderr, /ANTHROPIC_BASE_URL/);
+});
+
 test("--version flag prints version and exits 0", async () => {
   const { code, stdout } = await run(["--version"]);
 

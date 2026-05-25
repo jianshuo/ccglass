@@ -214,6 +214,14 @@ async function wrap(command, args, opts) {
     upstream = settingsBaseUrl;
     process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from Claude Code settings.json → ${upstream}\n`);
   }
+  // A provider switcher (e.g. cc-switch) may have set ANTHROPIC_BASE_URL directly in the
+  // environment rather than in settings.json — pick it up so the proxy forwards to the
+  // right third-party API instead of defaulting to api.anthropic.com.
+  if (!opts.upstream && !settingsBaseUrl && claudeBased && process.env[provider.envVar] &&
+      provider.upstream === "https://api.anthropic.com") {
+    upstream = process.env[provider.envVar];
+    process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from ${provider.envVar} env → ${upstream}\n`);
+  }
 
   if (!upstream) {
     process.stderr.write(
