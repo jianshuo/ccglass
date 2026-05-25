@@ -69,12 +69,15 @@ test("glm preset uses OPENAI_BASE_URL with autoUpstream", () => {
   assert.equal(provider.autoUpstream, true);
 });
 
-test("bedrock preset uses ANTHROPIC_BASE_URL with autoUpstream", () => {
+test("bedrock preset uses ANTHROPIC_BEDROCK_BASE_URL with autoUpstream", () => {
+  // Claude Code in Bedrock mode reads its endpoint from
+  // ANTHROPIC_BEDROCK_BASE_URL — ANTHROPIC_BASE_URL is silently ignored, so
+  // injecting the wrong key lets requests bypass the proxy entirely.
   const provider = resolveProvider("bedrock");
 
   assert.equal(provider.label, "AWS Bedrock (via Claude Code)");
   assert.equal(provider.format, "anthropic");
-  assert.equal(provider.envVar, "ANTHROPIC_BASE_URL");
+  assert.equal(provider.envVar, "ANTHROPIC_BEDROCK_BASE_URL");
   assert.equal(provider.command, "claude");
   assert.equal(provider.autoUpstream, true);
 });

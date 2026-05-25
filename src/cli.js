@@ -58,7 +58,7 @@ EXAMPLES
   ccglass run --provider ollama -- my-openai-cli
   ccglass run --provider openrouter -- my-openai-cli
   ccglass run --provider glm -- my-openai-cli     # set OPENAI_BASE_URL first
-  ccglass run --provider bedrock -- claude        # set ANTHROPIC_BASE_URL first
+  ccglass run --provider bedrock -- claude        # set ANTHROPIC_BEDROCK_BASE_URL first
   ccglass run --upstream https://my.api/v1 --env-var MY_BASE_URL -- my-tool
   ccglass export <id> --format raw > request.http`;
 
@@ -170,11 +170,13 @@ function detectCodexChatGPTAuth() {
   });
 }
 
-// Read ANTHROPIC_BASE_URL from Claude Code's settings.json env block. A provider
-// switcher (cc-switch etc.) writes the active provider's base URL here, which
-// otherwise makes claude bypass our proxy. Project settings shadow user settings
-// in Claude Code's precedence, so check them in the same order.
-function settingsEnvBaseUrl() {
+// Read the provider's base-URL env var from Claude Code's settings.json env
+// block. A provider switcher (cc-switch etc.) writes the active provider's base
+// URL here, which otherwise makes claude bypass our proxy. Project settings
+// shadow user settings in Claude Code's precedence, so check them in the same
+// order. The env var differs by mode: ANTHROPIC_BASE_URL for vanilla Claude,
+// ANTHROPIC_BEDROCK_BASE_URL when CLAUDE_CODE_USE_BEDROCK=1, etc.
+function settingsEnvBaseUrl(envVar) {
   const files = [
     path.resolve(".claude/settings.local.json"),
     path.resolve(".claude/settings.json"),
@@ -182,7 +184,7 @@ function settingsEnvBaseUrl() {
   ];
   for (const f of files) {
     try {
-      const url = JSON.parse(fs.readFileSync(f, "utf8"))?.env?.ANTHROPIC_BASE_URL;
+      const url = JSON.parse(fs.readFileSync(f, "utf8"))?.env?.[envVar];
       if (url) return url;
     } catch {}
   }
@@ -206,11 +208,15 @@ async function wrap(command, args, opts) {
   // If a provider switcher wrote ANTHROPIC_BASE_URL into settings.json and the
   // user didn't override --upstream, forward there by default (the plain claude
   // provider's default upstream is anthropic.com; kimi etc. keep their own).
-  const settingsBaseUrl = claudeBased ? settingsEnvBaseUrl() : null;
+  const settingsBaseUrl = claudeBased ? settingsEnvBaseUrl(provider.envVar) : null;
   let upstream = opts.upstream || (provider.upstream === "auto" ? null : provider.upstream);
   // autoUpstream: resolve upstream from the same env var we're about to override
   if (!upstream && provider.autoUpstream) upstream = process.env[provider.envVar];
-  if (!opts.upstream && settingsBaseUrl && provider.upstream === "https://api.anthropic.com") {
+  // Picking the upstream from settings.json covers two cases: vanilla Claude
+  // (default upstream is anthropic.com, switchers write ANTHROPIC_BASE_URL) and
+  // autoUpstream providers like bedrock/vertex (no fixed upstream — settings.json
+  // is often where the user's gateway URL lives).
+  if (!opts.upstream && settingsBaseUrl && (provider.upstream === "https://api.anthropic.com" || provider.autoUpstream)) {
     upstream = settingsBaseUrl;
     process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from Claude Code settings.json → ${upstream}\n`);
   }
@@ -266,8 +272,8 @@ async function wrap(command, args, opts) {
   // the env-var precedence regression in some Claude Code versions.
   if (claudeBased && opts.settingsOverride && !provider.noSettings) {
     if (settingsBaseUrl)
-      process.stderr.write(`  \x1b[33mnote:\x1b[0m settings.json sets ANTHROPIC_BASE_URL=${settingsBaseUrl}; overriding it so claude hits the proxy\n`);
-    args = ["--settings", JSON.stringify({ env: { ANTHROPIC_BASE_URL: proxyUrl } }), ...args];
+      process.stderr.write(`  \x1b[33mnote:\x1b[0m settings.json sets ${provider.envVar}=${settingsBaseUrl}; overriding it so claude hits the proxy\n`);
+    args = ["--settings", JSON.stringify({ env: { [provider.envVar]: proxyUrl } }), ...args];
   }
 
   const spawnCmd = provider.command || command;
