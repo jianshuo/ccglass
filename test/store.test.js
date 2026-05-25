@@ -342,3 +342,38 @@ test("Store writes a v2 manifest with blob refs; in-memory rec stays full", () =
 
   assert.ok(fs.existsSync(path.join(root, "blobs")));
 });
+
+test("v2 manifests are reconstructed transparently by loadSession/readEntryById", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-r2-"));
+  const store = new Store({ root });
+  const rec = store.add({
+    request: {
+      method: "POST", url: "/v1/messages", headers: {},
+      body: { model: "m", system: [{ type: "text", text: "s" }],
+              messages: [{ role: "user", content: "hi" }], tools: [{ name: "t" }] },
+    },
+  });
+  rec.response = { status: 200, raw: "ok" };
+  store.update(rec);
+
+  const session = store.sessionId;
+  const loaded = loadSession(root, session);
+  assert.equal(loaded.length, 1);
+  assert.deepEqual(loaded[0].request.body.messages, [{ role: "user", content: "hi" }]);
+  assert.deepEqual(loaded[0].request.body.system, [{ type: "text", text: "s" }]);
+  assert.deepEqual(loaded[0].request.body.tools, [{ name: "t" }]);
+
+  const one = readEntryById(root, `${session}/0001`);
+  assert.equal(one.response.status, 200);
+  assert.deepEqual(one.request.body.messages, [{ role: "user", content: "hi" }]);
+});
+
+test("listSessions ignores the blobs directory", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-ls-"));
+  const store = new Store({ root });
+  const rec = store.add({ request: { method: "POST", url: "/x", headers: {},
+    body: { model: "m", messages: [{ role: "user", content: "hi" }], tools: [] } } });
+  rec.response = { status: 200 }; store.update(rec);
+  const sessions = listSessions(root); // listSessions must already be imported at top of file
+  assert.deepEqual(sessions, [store.sessionId]); // NOT ["blobs", ...]
+});

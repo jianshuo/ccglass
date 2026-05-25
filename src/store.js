@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import { packRecord } from "./blobs.js";
+import { packRecord, unpackRecord } from "./blobs.js";
 
 const mask = (v) =>
   String(v)
@@ -116,7 +116,7 @@ export function listSessions(root) {
   if (!fs.existsSync(root)) return [];
   return fs
     .readdirSync(root, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
+    .filter((d) => d.isDirectory() && d.name !== "blobs")
     .map((d) => d.name)
     .sort()
     .reverse();
@@ -154,14 +154,21 @@ function shouldReplaceRecord(prev, rec, prevMtime, newMtime) {
 }
 
 /** Read one capture file; returns null on parse errors. Normalizes id to the path key. */
-function readRecordFile(file, id) {
+function readRecordFile(file, id, root) {
+  let raw;
   try {
-    const rec = JSON.parse(fs.readFileSync(file, "utf8"));
-    rec.id = id;
-    return rec;
+    raw = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch {
     return null;
   }
+  if (raw && raw.v === 2) {
+    const rec = unpackRecord(root, raw);
+    rec.id = id;
+    return rec;
+  }
+  // Legacy full record: return as-is (auto-migration is added in Task 5).
+  raw.id = id;
+  return raw;
 }
 
 export function listSessionsMulti(roots) {
@@ -193,7 +200,7 @@ export function loadSessionMulti(roots, session) {
       const st = fs.statSync(file);
       const prev = byId.get(id);
 
-      const rec = readRecordFile(file, id);
+      const rec = readRecordFile(file, id, root);
       if (!rec) continue;
 
       if (prev) {
@@ -250,7 +257,7 @@ export function loadSession(root, session) {
   const out = [];
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".json")).sort()) {
     const seq = f.replace(/\.json$/, "");
-    const rec = readRecordFile(path.join(dir, f), `${session}/${seq}`);
+    const rec = readRecordFile(path.join(dir, f), `${session}/${seq}`, root);
     if (rec) out.push(rec);
   }
   return out;
@@ -261,5 +268,5 @@ export function readEntryById(root, id) {
   if (!parts) return null;
   const file = path.join(root, parts.session, `${parts.seq}.json`);
   if (!fs.existsSync(file)) return null;
-  return readRecordFile(file, id);
+  return readRecordFile(file, id, root);
 }
