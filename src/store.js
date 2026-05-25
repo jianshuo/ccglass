@@ -114,6 +114,37 @@ export function listSessions(root) {
     .reverse();
 }
 
+export function listSessionsMulti(roots) {
+  const seen = new Set();
+  const all = [];
+  for (const root of roots) {
+    for (const s of listSessions(root)) {
+      if (!seen.has(s)) {
+        seen.add(s);
+        all.push({ session: s, root });
+      }
+    }
+  }
+  all.sort((a, b) => (a.session > b.session ? -1 : 1));
+  return all;
+}
+
+export function loadSessionMulti(roots, session) {
+  for (const root of roots) {
+    const dir = path.join(root, session);
+    if (fs.existsSync(dir)) return loadSession(root, session);
+  }
+  return [];
+}
+
+export function readEntryByIdMulti(roots, id) {
+  for (const root of roots) {
+    const rec = readEntryById(root, id);
+    if (rec) return rec;
+  }
+  return null;
+}
+
 export function loadSession(root, session) {
   const dir = path.join(root, session);
   if (!fs.existsSync(dir)) return [];

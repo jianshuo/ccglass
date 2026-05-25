@@ -1,10 +1,11 @@
-// ccglass MCP server: exposes the captured request/response logs in .ccglass/
-// to any MCP client (e.g. Claude Code) as read-only query tools. This lets the
-// agent inspect what it actually sent to the model — sessions, request
-// summaries, full prompts, and token/cost rollups — without leaving the chat.
+// ccglass MCP server: exposes the captured request/response logs to any MCP
+// client (e.g. Claude Code) as read-only query tools. This lets the agent
+// inspect what it actually sent to the model — sessions, request summaries,
+// full prompts, and token/cost rollups — without leaving the chat.
 //
-// Run: node src/mcp.js   (root resolved from $CCGLASS_ROOT or ./.ccglass)
+// Run: node src/mcp.js   (root resolved from $CCGLASS_ROOT or global path)
 
+import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -12,6 +13,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { listSessions, loadSession, summarize, readEntryById } from "./store.js";
 import { getAdapter, detectFormat } from "./formats/index.js";
+import { globalRoot, legacyRoot } from "./paths.js";
 
 // Parse one captured record's streamed response into { usage, cost } using the
 // same per-format adapter the dashboard uses (Anthropic / OpenAI / DeepSeek…).
@@ -24,10 +26,42 @@ function priceOf(rec) {
 
 const ROOT = process.env.CCGLASS_ROOT
   ? path.resolve(process.env.CCGLASS_ROOT)
-  : path.resolve(process.cwd(), ".ccglass");
+  : globalRoot(process.cwd());
 
-// Latest session = most recent directory name (listSessions returns desc).
-const latestSession = () => listSessions(ROOT)[0] || null;
+const LEGACY_ROOT = legacyRoot(process.cwd());
+const ROOTS = [ROOT, LEGACY_ROOT];
+
+function allSessions() {
+  const seen = new Set();
+  const result = [];
+  for (const root of ROOTS) {
+    for (const s of listSessions(root)) {
+      if (!seen.has(s)) { seen.add(s); result.push({ session: s, root }); }
+    }
+  }
+  return result;
+}
+
+function findRoot(session) {
+  for (const root of ROOTS) {
+    if (fs.existsSync(path.join(root, session))) return root;
+  }
+  return ROOT;
+}
+
+function findEntry(id) {
+  for (const root of ROOTS) {
+    const rec = readEntryById(root, id);
+    if (rec) return rec;
+  }
+  return null;
+}
+
+// Latest session = most recent across all roots.
+const latestSession = () => {
+  const all = allSessions();
+  return all.length ? all[0] : null;
+};
 
 const usd = (n) => `$${n.toFixed(4)}`;
 const json = (data) => ({ content: [{ type: "text", text: JSON.stringify(data, null, 2) }] });
@@ -43,8 +77,8 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
-    const sessions = listSessions(ROOT).map((s) => {
-      const recs = loadSession(ROOT, s);
+    const sessions = allSessions().map(({ session: s, root }) => {
+      const recs = loadSession(root, s);
       let cost = 0;
       for (const r of recs) cost += priceOf(r).cost.usd || 0;
       const ts = recs.map((r) => r.ts).filter(Boolean);
@@ -72,10 +106,10 @@ server.registerTool(
     },
   },
   async ({ session, limit = 20 }) => {
-    const sess = session || latestSession();
-    if (!sess) return json({ error: "no sessions found", root: ROOT });
-    const rows = loadSession(ROOT, sess).map(summarize).slice(-limit).reverse();
-    return json({ session: sess, count: rows.length, requests: rows });
+    const entry = session ? { session, root: findRoot(session) } : latestSession();
+    if (!entry) return json({ error: "no sessions found", root: ROOT });
+    const rows = loadSession(entry.root, entry.session).map(summarize).slice(-limit).reverse();
+    return json({ session: entry.session, count: rows.length, requests: rows });
   },
 );
 
@@ -90,7 +124,7 @@ server.registerTool(
     },
   },
   async ({ id }) => {
-    const rec = readEntryById(ROOT, id);
+    const rec = findEntry(id);
     if (!rec) return json({ error: "not found", id });
     const b = rec.request?.body || {};
     const sys = Array.isArray(b.system)

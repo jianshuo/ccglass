@@ -9,11 +9,12 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { proxyArgs } from "./child-args.js";
 import { spawnCommand } from "./spawn-command.js";
-import { Store, readEntryById } from "./store.js";
+import { Store, readEntryById, readEntryByIdMulti, listSessionsMulti, loadSessionMulti } from "./store.js";
 import { createProxy } from "./proxy.js";
 import { createServer } from "./server.js";
 import { resolveProvider, PROVIDERS, PICKABLE } from "./providers.js";
 import { renderExport } from "./export.js";
+import { globalRoot, legacyRoot } from "./paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")).version;
@@ -39,7 +40,7 @@ OPTIONS
   --base-url <url>    Alias for --upstream
   --port <n>          Dashboard port (default: auto)
   --proxy-port <n>    Proxy port (default: auto)
-  --dir <path>        Log directory (default: ./.ccglass)
+  --dir <path>        Log directory (default: ~/.ccglass/sessions/<project>)
   --no-open           Do NOT open the dashboard in your browser (opens by default)
   --no-redact         Do NOT mask auth tokens in saved logs
   --no-mcp            Do NOT inject ccglass's inspection tools into Claude Code
@@ -63,7 +64,7 @@ EXAMPLES
   ccglass export <id> --format raw > request.http`;
 
 function parseArgs(argv) {
-  const opts = { dir: path.resolve(".ccglass"), redact: true, mcp: true, open: true, settingsOverride: true };
+  const opts = { dir: null, redact: true, mcp: true, open: true, settingsOverride: true };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -241,7 +242,7 @@ async function wrap(command, args, opts) {
 
   const store = new Store({ root: opts.dir, redact: opts.redact, format: provider.format });
   const proxy = createProxy({ upstream, store });
-  const dashboard = createServer({ root: opts.dir, store });
+  const dashboard = createServer({ roots: opts.readRoots, store });
 
   const proxyPort = await listen(proxy, opts.proxyPort);
   const dashPort = await listen(dashboard, opts.port);
@@ -303,11 +304,12 @@ async function wrap(command, args, opts) {
 }
 
 async function view(opts) {
-  if (!fs.existsSync(opts.dir)) {
-    process.stderr.write(`ccglass: no logs found at ${opts.dir}. Run \`ccglass\` first.\n`);
+  const hasAny = opts.readRoots.some((r) => fs.existsSync(r));
+  if (!hasAny) {
+    process.stderr.write(`ccglass: no logs found. Run \`ccglass\` first.\n`);
     process.exit(1);
   }
-  const dashboard = createServer({ root: opts.dir, store: null });
+  const dashboard = createServer({ roots: opts.readRoots, store: null });
   const dashPort = await listen(dashboard, opts.port);
   const dashUrl = `http://127.0.0.1:${dashPort}`;
   process.stderr.write(`\n  \x1b[36m●\x1b[0m ccglass dashboard: \x1b[1m${dashUrl}\x1b[0m  (viewing saved logs — Ctrl-C to stop)\n`);
@@ -315,9 +317,9 @@ async function view(opts) {
 }
 
 function exportEntry(id, opts) {
-  const rec = readEntryById(opts.dir, id);
+  const rec = readEntryByIdMulti(opts.readRoots, id);
   if (!rec) {
-    process.stderr.write(`ccglass: no entry ${id} under ${opts.dir}\n`);
+    process.stderr.write(`ccglass: no entry ${id}\n`);
     process.exit(1);
   }
   process.stdout.write(renderExport(rec, opts.format || "raw").body + "\n");
@@ -325,6 +327,13 @@ function exportEntry(id, opts) {
 
 export async function main(argv) {
   const { opts, rest } = parseArgs(argv);
+  const cwd = process.cwd();
+
+  if (!opts.dir) opts.dir = globalRoot(cwd);
+  const legacy = legacyRoot(cwd);
+  opts.readRoots = [opts.dir];
+  if (opts.dir !== legacy) opts.readRoots.push(legacy);
+
   const cmd = rest[0];
 
   if (rest.includes("-h") || rest.includes("--help")) return void process.stdout.write(HELP + "\n");
