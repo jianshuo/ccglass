@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { writeBlob, readBlob, blobPath } from "../src/blobs.js";
+import { packRecord, unpackRecord } from "../src/blobs.js";
 
 const tmpRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-blob-"));
 
@@ -28,4 +29,53 @@ test("readBlob round-trips the stored value", () => {
   const value = { role: "assistant", content: [{ type: "text", text: "x" }] };
   const ref = writeBlob(root, value);
   assert.deepEqual(readBlob(root, ref), value);
+});
+
+function makeRec(body) {
+  return {
+    id: "S/0001", session: "S", seq: 1, ts: 123, format: "anthropic",
+    request: { headers: { "x-api-key": "masked" }, body },
+    response: { status: 200, raw: "ok" },
+  };
+}
+
+test("pack -> unpack is lossless: anthropic system array + tools + messages", () => {
+  const root = tmpRoot();
+  const body = {
+    model: "claude-opus-4-7", max_tokens: 1024,
+    system: [{ type: "text", text: "sys" }],
+    tools: [{ name: "t", description: "d" }],
+    messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "yo" }],
+  };
+  const rec = makeRec(body);
+  const manifest = packRecord(root, rec);
+  assert.equal(manifest.v, 2);
+  assert.deepEqual(unpackRecord(root, manifest), rec);
+});
+
+test("pack -> unpack is lossless: openai input, no tools, system as string", () => {
+  const root = tmpRoot();
+  const body = {
+    model: "gpt-x", system: "plain string",
+    input: [{ role: "user", content: "hi" }],
+  };
+  const rec = makeRec(body);
+  rec.format = "openai";
+  const manifest = packRecord(root, rec);
+  assert.deepEqual(unpackRecord(root, manifest), rec);
+});
+
+test("pack -> unpack: no system, no tools, empty messages", () => {
+  const root = tmpRoot();
+  const rec = makeRec({ model: "m", messages: [], tools: [] });
+  assert.deepEqual(unpackRecord(root, packRecord(root, rec)), rec);
+});
+
+test("unpackRecord backfills a placeholder for a missing blob", () => {
+  const root = tmpRoot();
+  const rec = makeRec({ model: "m", messages: [{ role: "user", content: "hi" }] });
+  const manifest = packRecord(root, rec);
+  fs.rmSync(blobPath(root, manifest.request.messages[0]), { force: true });
+  const out = unpackRecord(root, manifest);
+  assert.deepEqual(out.request.body.messages[0], { __missing_blob: manifest.request.messages[0] });
 });

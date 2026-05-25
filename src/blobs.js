@@ -35,3 +35,63 @@ export function writeBlob(root, value) {
 export function readBlob(root, ref) {
   return JSON.parse(fs.readFileSync(blobPath(root, ref), "utf8"));
 }
+
+// The two array keys that hold conversation history (Anthropic vs OpenAI shape).
+const HISTORY_KEYS = ["messages", "input"];
+
+// Split a full record's request body into blobs + a v2 manifest. The big repeated
+// pieces (system, tools, each history message) become blob refs; everything small
+// (model, params, headers, response) stays inline.
+export function packRecord(root, rec) {
+  const body = (rec.request && rec.request.body) || {};
+  const historyKey = HISTORY_KEYS.find((k) => Array.isArray(body[k])) || null;
+
+  const meta = { ...body };
+  delete meta.system;
+  delete meta.tools;
+  for (const k of HISTORY_KEYS) delete meta[k];
+
+  const system = body.system != null ? writeBlob(root, body.system) : null;
+  const tools = Array.isArray(body.tools) ? writeBlob(root, body.tools) : null;
+  const messages = historyKey ? body[historyKey].map((m) => writeBlob(root, m)) : [];
+
+  return {
+    v: 2,
+    id: rec.id, session: rec.session, seq: rec.seq, ts: rec.ts, format: rec.format,
+    request: {
+      headers: (rec.request && rec.request.headers) ?? {},
+      meta,
+      historyKey,
+      system,
+      tools,
+      messages,
+    },
+    response: rec.response ?? null,
+  };
+}
+
+function safeBlob(root, ref) {
+  try {
+    return readBlob(root, ref);
+  } catch {
+    return { __missing_blob: ref };
+  }
+}
+
+// Reassemble the exact original full record from a v2 manifest.
+export function unpackRecord(root, manifest) {
+  const r = manifest.request || {};
+  const body = { ...(r.meta || {}) };
+  if (r.system != null) body.system = safeBlob(root, r.system);
+  if (r.tools != null) body.tools = safeBlob(root, r.tools);
+  if (r.historyKey) body[r.historyKey] = (r.messages || []).map((ref) => safeBlob(root, ref));
+  return {
+    id: manifest.id,
+    session: manifest.session,
+    seq: manifest.seq,
+    ts: manifest.ts,
+    format: manifest.format,
+    request: { headers: r.headers ?? {}, body },
+    response: manifest.response ?? null,
+  };
+}
