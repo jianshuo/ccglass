@@ -9,7 +9,7 @@ const bin = path.join(__dirname, "..", "bin", "ccglass.js");
 
 function run(args, env = {}) {
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [bin, ...args], {
+    execFile(process.execPath, [bin, ...args], {
       env: { ...process.env, ...env },
       timeout: 5000,
     }, (err, stdout, stderr) => {
@@ -70,6 +70,12 @@ test("bedrock keys off ANTHROPIC_BEDROCK_BASE_URL, not ANTHROPIC_BASE_URL", asyn
   assert.match(stderr, /AWS Bedrock/);
   assert.match(stderr, /ANTHROPIC_BEDROCK_BASE_URL/);
   assert.doesNotMatch(stderr, /Set ANTHROPIC_BASE_URL/);
+test("claude uses ANTHROPIC_BASE_URL env var as upstream (invalid URL triggers clear error)", async () => {
+  const { code, stderr } = await run(["claude"], { ANTHROPIC_BASE_URL: "not-a-valid-url" });
+
+  assert.equal(code, 1);
+  assert.match(stderr, /invalid upstream URL/);
+  assert.match(stderr, /ANTHROPIC_BASE_URL/);
 });
 
 test("--version flag prints version and exits 0", async () => {
@@ -78,3 +84,4 @@ test("--version flag prints version and exits 0", async () => {
   assert.equal(code, 0);
   assert.match(stdout, /^\d+\.\d+\.\d+/);
 });
+

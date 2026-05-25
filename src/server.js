@@ -6,7 +6,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { summarize, listSessions, loadSession, readEntryById } from "./store.js";
+import { summarize, listSessionsMulti, loadSessionMulti, readEntryByIdMulti } from "./store.js";
 import { getAdapter, detectFormat } from "./formats/index.js";
 import { diffBlockLists } from "./diff.js";
 import { renderExport } from "./export.js";
@@ -17,7 +17,7 @@ const WEB_DIR = path.join(__dirname, "..", "web");
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
 
 // `store` is present in live (`ccglass claude`) mode; otherwise we read from disk.
-export function createServer({ root, store }) {
+export function createServer({ roots, store }) {
   const sseClients = new Set();
 
   if (store) {
@@ -34,11 +34,11 @@ export function createServer({ root, store }) {
     const p = url.pathname;
 
     try {
-      if (p === "/api/sessions") return json(res, apiSessions(root, store));
-      if (p === "/api/requests") return json(res, apiRequests(root, store, url));
-      if (p.startsWith("/api/request/")) return json(res, apiRequest(root, store, decodeURIComponent(p.slice("/api/request/".length))));
-      if (p === "/api/diff") return json(res, apiDiff(root, store, url));
-      if (p === "/api/export") return apiExport(root, store, url, res);
+      if (p === "/api/sessions") return json(res, apiSessions(roots, store));
+      if (p === "/api/requests") return json(res, apiRequests(roots, store, url));
+      if (p.startsWith("/api/request/")) return json(res, apiRequest(roots, store, decodeURIComponent(p.slice("/api/request/".length))));
+      if (p === "/api/diff") return json(res, apiDiff(roots, store, url));
+      if (p === "/api/export") return apiExport(roots, store, url, res);
       if (p === "/api/stream") return stream(res, sseClients);
       return serveStatic(p, res);
     } catch (e) {
@@ -49,27 +49,27 @@ export function createServer({ root, store }) {
 
 // ---- API handlers --------------------------------------------------------
 
-function getEntry(root, store, id) {
+function getEntry(roots, store, id) {
   if (store) {
     const live = store.get(id);
     if (live) return live;
   }
-  return readEntryById(root, id);
+  return readEntryByIdMulti(roots, id);
 }
 
-function apiSessions(root, store) {
-  return { sessions: listSessions(root), live: store ? store.sessionId : null };
+function apiSessions(roots, store) {
+  return { sessions: listSessionsMulti(roots), live: store ? store.sessionId : null };
 }
 
-function apiRequests(root, store, url) {
+function apiRequests(roots, store, url) {
   const session = url.searchParams.get("session");
   if (store && (!session || session === store.sessionId)) return { entries: store.list() };
   if (!session) return { entries: [] };
-  return { entries: loadSession(root, session).map(summarize) };
+  return { entries: loadSessionMulti(roots, session).map(summarize) };
 }
 
-function apiRequest(root, store, id) {
-  const rec = getEntry(root, store, id);
+function apiRequest(roots, store, id) {
+  const rec = getEntry(roots, store, id);
   if (!rec) return { error: "not found" };
   const fmt = detectFormat(rec);
   const A = getAdapter(fmt);
@@ -89,19 +89,19 @@ function apiRequest(root, store, id) {
   };
 }
 
-function apiDiff(root, store, url) {
-  const a = getEntry(root, store, url.searchParams.get("a"));
-  const b = getEntry(root, store, url.searchParams.get("b"));
+function apiDiff(roots, store, url) {
+  const a = getEntry(roots, store, url.searchParams.get("a"));
+  const b = getEntry(roots, store, url.searchParams.get("b"));
   if (!a || !b) return { error: "need both a and b" };
   const blocksA = getAdapter(detectFormat(a)).blocks(a.request?.body || {});
   const blocksB = getAdapter(detectFormat(b)).blocks(b.request?.body || {});
   return diffBlockLists(blocksA, blocksB);
 }
 
-function apiExport(root, store, url, res) {
+function apiExport(roots, store, url, res) {
   const id = url.searchParams.get("id");
   const format = url.searchParams.get("format") || "md";
-  const rec = getEntry(root, store, id);
+  const rec = getEntry(roots, store, id);
   if (!rec) return json(res, { error: "not found" }, 404);
 
   const { contentType, ext, body } = renderExport(rec, format);

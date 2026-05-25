@@ -1,6 +1,7 @@
 // Persistence layer: every captured request/response pair is written to
-// .ccglass/<session>/NNNN.json. The Store also acts as an event bus so the
-// dashboard server can push new entries live.
+// <root>/<session>/NNNN.json (default ~/.ccglass/sessions/<project-key>/).
+// The Store also acts as an event bus so the dashboard server can push new
+// entries live.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -114,19 +115,144 @@ export function listSessions(root) {
     .reverse();
 }
 
+export function hasCapturedLogs(root) {
+  if (!fs.existsSync(root)) return false;
+  for (const s of listSessions(root)) {
+    const dir = path.join(root, s);
+    try {
+      if (fs.readdirSync(dir).some((f) => f.endsWith(".json"))) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  return false;
+}
+
+/** Parse `<session>/<seq>` entry ids; returns null when malformed. */
+export function parseEntryId(id) {
+  const i = id.indexOf("/");
+  if (i <= 0 || i === id.length - 1) return null;
+  const session = id.slice(0, i);
+  const seq = id.slice(i + 1);
+  if (!session || !seq || seq.includes("/")) return null;
+  return { session, seq };
+}
+
+function shouldReplaceRecord(prev, rec, prevMtime, newMtime) {
+  const pts = prev.ts ?? 0;
+  const rts = rec.ts ?? 0;
+  if (rts > pts) return true;
+  if (rts < pts) return false;
+  return newMtime > prevMtime;
+}
+
+/** Read one capture file; returns null on parse errors. Normalizes id to the path key. */
+function readRecordFile(file, id) {
+  try {
+    const rec = JSON.parse(fs.readFileSync(file, "utf8"));
+    rec.id = id;
+    return rec;
+  } catch {
+    return null;
+  }
+}
+
+export function listSessionsMulti(roots) {
+  const seen = new Set();
+  const sessions = [];
+  for (const root of roots) {
+    for (const s of listSessions(root)) {
+      if (!seen.has(s)) {
+        seen.add(s);
+        sessions.push(s);
+      }
+    }
+  }
+  sessions.sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+  return sessions;
+}
+
+export function loadSessionMulti(roots, session) {
+  const byId = new Map();
+  const fileMtime = new Map();
+
+  for (const root of roots) {
+    const dir = path.join(root, session);
+    if (!fs.existsSync(dir)) continue;
+    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".json")).sort()) {
+      const file = path.join(dir, f);
+      const seq = f.replace(/\.json$/, "");
+      const id = `${session}/${seq}`;
+      const st = fs.statSync(file);
+      const prev = byId.get(id);
+
+      const rec = readRecordFile(file, id);
+      if (!rec) continue;
+
+      if (prev) {
+        const firstMtime = fileMtime.get(id) ?? 0;
+        if (shouldReplaceRecord(prev, rec, firstMtime, st.mtimeMs)) {
+          byId.set(id, rec);
+          fileMtime.set(id, st.mtimeMs);
+        }
+        continue;
+      }
+
+      byId.set(id, rec);
+      fileMtime.set(id, st.mtimeMs);
+    }
+  }
+
+  return [...byId.values()].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+}
+
+export function readEntryByIdMulti(roots, id) {
+  const parts = parseEntryId(id);
+  if (!parts) return null;
+  const { session, seq } = parts;
+  let best = null;
+  let bestMtime = 0;
+  for (const root of roots) {
+    const rec = readEntryById(root, id);
+    if (!rec) continue;
+    const file = path.join(root, session, `${seq}.json`);
+    let mtime = 0;
+    try {
+      mtime = fs.statSync(file).mtimeMs;
+    } catch {
+      /* ignore */
+    }
+    if (!best) {
+      best = rec;
+      bestMtime = mtime;
+      continue;
+    }
+    const rts = rec.ts ?? 0;
+    const bts = best.ts ?? 0;
+    if (rts > bts || (rts === bts && mtime > bestMtime)) {
+      best = rec;
+      bestMtime = mtime;
+    }
+  }
+  return best;
+}
+
 export function loadSession(root, session) {
   const dir = path.join(root, session);
   if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
-    .sort()
-    .map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")));
+  const out = [];
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".json")).sort()) {
+    const seq = f.replace(/\.json$/, "");
+    const rec = readRecordFile(path.join(dir, f), `${session}/${seq}`);
+    if (rec) out.push(rec);
+  }
+  return out;
 }
 
 export function readEntryById(root, id) {
-  const [session, seq] = id.split("/");
-  const file = path.join(root, session, `${seq}.json`);
+  const parts = parseEntryId(id);
+  if (!parts) return null;
+  const file = path.join(root, parts.session, `${parts.seq}.json`);
   if (!fs.existsSync(file)) return null;
-  return JSON.parse(fs.readFileSync(file, "utf8"));
+  return readRecordFile(file, id);
 }
