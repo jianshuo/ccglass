@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { proxyArgs } from "./child-args.js";
 import { spawnCommand } from "./spawn-command.js";
 import { Store, hasCapturedLogs } from "./store.js";
-import { exportEntry, migrate } from "./log-cli.js";
+import { exportEntry, migrate, repack, rmCmd } from "./log-cli.js";
 import { createProxy } from "./proxy.js";
 import { createServer } from "./server.js";
 import { resolveProvider, PROVIDERS, PICKABLE } from "./providers.js";
@@ -31,6 +31,8 @@ USAGE
   ccglass run [--provider P] -- <cmd...>   Inspect any client
   ccglass view                  Open the dashboard over saved logs
   ccglass migrate               Copy ./.ccglass logs (this project only) to the global store
+  ccglass repack [session]      Re-pack stored captures into the deduped v2 format
+  ccglass rm <session>          Delete a session and reclaim its orphaned blobs
   ccglass export <id> [--format raw|md|json|har]
 
 OPTIONS
@@ -392,7 +394,7 @@ async function view(opts) {
   if (opts.open) openBrowser(dashUrl);
 }
 
-export { exportEntry, migrate } from "./log-cli.js";
+export { exportEntry, migrate, repack, rmCmd } from "./log-cli.js";
 
 export async function main(argv) {
   const { opts, rest } = parseArgs(argv);
@@ -408,6 +410,8 @@ export async function main(argv) {
 
   if (cmd === "view") return view(opts);
   if (cmd === "migrate") return migrate(opts);
+  if (cmd === "repack") { opts.session = rest[1]; return repack(opts); }
+  if (cmd === "rm") return rmCmd(rest[1], opts);
   if (cmd === "export") return exportEntry(rest[1], opts);
   if (cmd === "run") {
     const dashIdx = rest.indexOf("--");

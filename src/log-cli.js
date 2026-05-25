@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { legacyRoot } from "./paths.js";
-import { listSessions, hasCapturedLogs, readEntryByIdMulti } from "./store.js";
+import { listSessions, hasCapturedLogs, readEntryByIdMulti, rmSession, loadSession } from "./store.js";
 import { renderExport } from "./export.js";
 
 export function exportEntry(id, opts) {
@@ -60,4 +60,30 @@ export function migrate(opts) {
     `ccglass migrate: copied ${files} file(s) from ./.ccglass (${cwd}) → ${dest}\n` +
     `  (only logs under the current project's ./.ccglass; other directories are untouched.)\n`
   );
+}
+
+// `ccglass repack [session]` — force-migrate legacy records to v2 by reading them
+// (reads auto-migrate in place). With no session, repacks every session.
+export function repack(opts) {
+  for (const root of opts.readRoots) {
+    const sessions = listSessions(root);
+    for (const s of sessions) {
+      if (opts.session && s !== opts.session) continue;
+      loadSession(root, s); // side effect: rewrites legacy files as v2
+    }
+  }
+  process.stdout.write("ccglass: repack complete\n");
+}
+
+// `ccglass rm <session>` — delete a session across read roots and GC orphan blobs.
+export function rmCmd(session, opts) {
+  if (!session) {
+    process.stderr.write("ccglass rm: usage: ccglass rm <session>\n");
+    process.exitCode = 1;
+    return;
+  }
+  for (const root of opts.readRoots) {
+    if (fs.existsSync(path.join(root, session))) rmSession(root, session);
+  }
+  process.stdout.write(`ccglass: removed ${session}\n`);
 }

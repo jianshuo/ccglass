@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
+import os from "node:os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bin = path.join(__dirname, "..", "bin", "ccglass.js");
@@ -85,5 +87,22 @@ test("--version flag prints version and exits 0", async () => {
 
   assert.equal(code, 0);
   assert.match(stdout, /^\d+\.\d+\.\d+/);
+});
+
+test("ccglass rm deletes a session directory", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-rmcli-"));
+  const session = "2020-01-01T00-00-00-000Z";
+  const dir = path.join(root, session);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "0001.json"), JSON.stringify({
+    v: 2, id: `${session}/0001`, session, seq: 1, ts: 1, format: "anthropic",
+    request: { headers: {}, meta: { model: "m" }, historyKey: "messages",
+               system: null, tools: null, messages: [] },
+    response: null,
+  }));
+
+  const { code } = await run(["rm", session, "--dir", root]);
+  assert.equal(code, 0);
+  assert.ok(!fs.existsSync(dir));
 });
 
