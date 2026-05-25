@@ -78,3 +78,14 @@ test("unpackRecord backfills a placeholder for a missing blob", () => {
   const out = unpackRecord(root, manifest);
   assert.deepEqual(out.request.body.messages[0], { __missing_blob: manifest.request.messages[0] });
 });
+
+test("pack -> unpack preserves request method and url", () => {
+  const root = tmpRoot();
+  const rec = makeRec({ model: "m", messages: [{ role: "user", content: "hi" }] });
+  rec.request.method = "POST";
+  rec.request.url = "/v1/messages";
+  const out = unpackRecord(root, packRecord(root, rec));
+  assert.equal(out.request.method, "POST");
+  assert.equal(out.request.url, "/v1/messages");
+  assert.deepEqual(out, rec); // still fully lossless
+});

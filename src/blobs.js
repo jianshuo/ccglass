@@ -55,17 +55,15 @@ export function packRecord(root, rec) {
   const tools = Array.isArray(body.tools) ? writeBlob(root, body.tools) : null;
   const messages = historyKey ? body[historyKey].map((m) => writeBlob(root, m)) : [];
 
+  // Preserve the full request envelope (method, url, headers, …) minus the body,
+  // which is split into meta + blob refs below.
+  const reqEnvelope = { ...(rec.request || {}) };
+  delete reqEnvelope.body;
+
   return {
     v: 2,
     id: rec.id, session: rec.session, seq: rec.seq, ts: rec.ts, format: rec.format,
-    request: {
-      headers: (rec.request && rec.request.headers) ?? {},
-      meta,
-      historyKey,
-      system,
-      tools,
-      messages,
-    },
+    request: { ...reqEnvelope, meta, historyKey, system, tools, messages },
     response: rec.response ?? null,
   };
 }
@@ -81,21 +79,19 @@ function safeBlob(root, ref) {
 // Reassemble the exact original full record from a v2 manifest.
 export function unpackRecord(root, manifest) {
   const r = manifest.request || {};
+  const { meta, historyKey, system, tools, messages, ...envelope } = r;
   // Key order is normalized here: the reconstructed body lists meta scalars first,
   // then system/tools/history — not the original insertion order. This is deepEqual-safe,
   // but do NOT JSON.stringify-fingerprint the reconstructed body expecting byte-identical
   // key order to the original.
-  const body = { ...(r.meta || {}) };
-  if (r.system != null) body.system = safeBlob(root, r.system);
-  if (r.tools != null) body.tools = safeBlob(root, r.tools);
-  if (r.historyKey) body[r.historyKey] = (r.messages || []).map((ref) => safeBlob(root, ref));
+  const body = { ...(meta || {}) };
+  if (system != null) body.system = safeBlob(root, system);
+  if (tools != null) body.tools = safeBlob(root, tools);
+  if (historyKey) body[historyKey] = (messages || []).map((ref) => safeBlob(root, ref));
   return {
-    id: manifest.id,
-    session: manifest.session,
-    seq: manifest.seq,
-    ts: manifest.ts,
-    format: manifest.format,
-    request: { headers: r.headers ?? {}, body },
+    id: manifest.id, session: manifest.session, seq: manifest.seq,
+    ts: manifest.ts, format: manifest.format,
+    request: { ...envelope, body },
     response: manifest.response ?? null,
   };
 }
