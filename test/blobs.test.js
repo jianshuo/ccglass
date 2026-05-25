@@ -111,9 +111,14 @@ test("rmSession deletes the session and GCs only orphaned blobs", () => {
   fs.mkdirSync(b.sessionDir, { recursive: true });
   const rb = b.add(mk("only-B")); rb.response = { status: 200 }; b.update(rb);
 
+  const onlyARef = JSON.parse(
+    fs.readFileSync(path.join(root, a.sessionId, "0001.json"), "utf8")
+  ).request.messages[1]; // index 1 is the unique "only-A" message
+
   rmSession(root, a.sessionId);
 
   assert.ok(!listSessions(root).includes(a.sessionId));
   assert.ok(listSessions(root).includes(b.sessionId));
-  assert.ok(fs.existsSync(blobPath(root, sharedRef)));
+  assert.ok(!fs.existsSync(blobPath(root, onlyARef)), "orphaned blob should be GC'd");
+  assert.ok(fs.existsSync(blobPath(root, sharedRef)), "shared blob should survive");
 });

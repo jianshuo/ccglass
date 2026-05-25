@@ -87,6 +87,10 @@ export function collectRefs(manifest, used) {
 // Mark-and-sweep: delete blobs not referenced by any remaining v2 manifest under
 // `root`. `listSessions` lists session dir names; `sessionDir(root, name)` builds
 // a session directory path. (Both injected to avoid a store<->blobs import cycle.)
+//
+// Assumes single-writer use: a blob written but whose referencing manifest isn't
+// flushed yet could be seen as orphaned and deleted (harmless — re-created on the
+// next write via dedup), so don't run GC concurrently with active captures.
 export function gcBlobs(root, listSessions, sessionDir) {
   const used = new Set();
   for (const s of listSessions(root)) {
@@ -111,7 +115,13 @@ export function gcBlobs(root, listSessions, sessionDir) {
   if (!fs.existsSync(blobsDir)) return;
   for (const shard of fs.readdirSync(blobsDir)) {
     const shardDir = path.join(blobsDir, shard);
-    for (const bf of fs.readdirSync(shardDir)) {
+    let blobFiles;
+    try {
+      blobFiles = fs.readdirSync(shardDir);
+    } catch {
+      continue; // skip non-directory entries (.DS_Store, stray files)
+    }
+    for (const bf of blobFiles) {
       if (!bf.endsWith(".json")) continue;
       const ref = `sha256:${bf.replace(/\.json$/, "")}`;
       if (!used.has(ref)) fs.rmSync(path.join(shardDir, bf), { force: true });
