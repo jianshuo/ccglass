@@ -155,6 +155,8 @@ ccglass run --provider openai -- <cmd...>   # inspect any client
 ccglass proxy --provider openai            # proxy only — point your IDE at the proxy URL
 ccglass view                  # re-open the dashboard over saved logs (global + ./.ccglass)
 ccglass migrate               # copy this project's ./.ccglass into the global store
+ccglass repack [session]      # force-migrate existing captures to content-addressed (v2) format
+ccglass rm <session>          # delete a session and reclaim its orphaned blobs
 ccglass export <session>/<seq> --format raw|md|json|har   # e.g. 2026-05-25T12-00-00-000Z/0003
 ```
 
@@ -191,6 +193,17 @@ the store for the current directory (default: the global path above, or `--dir` 
 you passed it). It skips files that already exist at the destination, only runs in
 the current working directory, and exits with a clear message if there are no
 `.json` logs to copy (empty session folders alone are not enough).
+
+### Storage format
+
+Captures are stored content-addressed (git-style): each message, the `tools`
+array, and the `system` block are written once to `<root>/blobs/` and referenced
+by hash from per-request manifests. This keeps long sessions from growing
+quadratically. Legacy captures are migrated to this format automatically the
+first time they are read.
+
+- `ccglass repack [session]` — force-migrate existing captures now.
+- `ccglass rm <session>` — delete a session and reclaim its orphaned blobs.
 
 Auth tokens (`authorization`, `x-api-key`) are **masked by default** — pass
 `--no-redact` to keep them. Treat the log directory as sensitive regardless.
