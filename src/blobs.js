@@ -7,6 +7,9 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 
 export function blobRef(value) {
+  // Hashing contract: JSON.stringify is key-order-sensitive, so callers must
+  // preserve insertion order for dedup to hit (same content, different key
+  // order hashes differently).
   const json = JSON.stringify(value);
   const hex = createHash("sha256").update(json).digest("hex");
   return { ref: `sha256:${hex}`, hex, json };

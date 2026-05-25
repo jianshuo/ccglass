@@ -18,6 +18,9 @@ test("writeBlob is content-addressed and dedups identical content", () => {
   assert.ok(fs.existsSync(file));
   const hex = ref1.slice("sha256:".length);
   assert.equal(path.basename(path.dirname(file)), hex.slice(0, 2));
+
+  const shardDir = path.dirname(file);
+  assert.equal(fs.readdirSync(shardDir).filter((f) => f.endsWith(".json")).length, 1);
 });
 
 test("readBlob round-trips the stored value", () => {
