@@ -97,6 +97,28 @@ ccglass run --base-url https://my.custom.api/v1 --env-var MY_BASE_URL -- my-tool
 ccglass run --provider openai --upstream https://my.openai-compat.api -- my-tool
 ```
 
+## IDE Support (Cursor, Cline, Continue…)
+
+IDE extensions that let you configure a **custom API base URL** (e.g. Cursor in BYOK mode, Cline, Continue.dev, Copilot Chat with custom models) can be inspected with the `proxy` subcommand — it starts the proxy + dashboard **without spawning any child process**:
+
+```bash
+ccglass proxy --provider openai   # OpenAI-compatible IDEs (Cursor, Cline, Continue…)
+ccglass proxy --provider claude   # Anthropic-compatible IDEs
+```
+
+Output:
+
+```
+  ● ccglass proxy → https://api.openai.com
+    Set your IDE's API base URL to: http://127.0.0.1:PORT
+    dashboard: http://127.0.0.1:DASHPORT
+    (Ctrl-C to stop)
+```
+
+Point your IDE's API base URL at the printed proxy address, then open the dashboard URL to watch every request in real time.
+
+**Limitation:** This only works when the IDE is configured to use *your own API key* with a custom base URL (BYOK mode). Cursor's built-in subscription models route through Cursor's own backend (`api2.cursor.sh`) and cannot be intercepted this way.
+
 ## What you get
 
 - **Live request stream** — every call appears instantly; click to expand the
@@ -130,6 +152,7 @@ ccglass deepseek-tui [args...] # inspect DeepSeek-TUI runtime directly
 ccglass kimi   [args...]      # inspect Kimi (via Claude Code)
 ccglass opencode [args...]    # inspect OpenCode (auto-detects upstream from OPENAI_BASE_URL)
 ccglass run --provider openai -- <cmd...>   # inspect any client
+ccglass proxy --provider openai            # proxy only — point your IDE at the proxy URL
 ccglass view                  # re-open the dashboard over saved .ccglass/ logs
 ccglass export <id> --format raw|md|json|har   # raw = readable HTTP transcript
 ```
