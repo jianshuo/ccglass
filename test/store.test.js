@@ -415,3 +415,35 @@ test("a corrupt v2 manifest yields null, not a thrown error", () => {
   const loaded = loadSession(root, session); // (use whatever name loadSession is imported as)
   assert.equal(loaded.length, 0); // corrupt entry is dropped (readRecordFile returned null), not thrown
 });
+
+function countBlobs(root) {
+  const blobsDir = path.join(root, "blobs");
+  if (!fs.existsSync(blobsDir)) return 0;
+  let n = 0;
+  for (const shard of fs.readdirSync(blobsDir)) {
+    n += fs.readdirSync(path.join(blobsDir, shard)).filter((f) => f.endsWith(".json")).length;
+  }
+  return n;
+}
+
+test("growing-prefix sessions store O(N) blobs, not O(N^2)", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-dedup-"));
+  const store = new Store({ root });
+  const N = 20;
+  const messages = [];
+  const tools = [{ name: "t", description: "x".repeat(500) }]; // identical every call
+  for (let i = 0; i < N; i++) {
+    messages.push({ role: "user", content: `turn ${i}` });
+    messages.push({ role: "assistant", content: `reply ${i}` });
+    const rec = store.add({
+      request: { method: "POST", url: "/v1/messages", headers: {},
+        body: { model: "m", tools, messages: messages.map((m) => ({ ...m })) } },
+    });
+    rec.response = { status: 200, raw: "ok" };
+    store.update(rec);
+  }
+  // Unique blobs: 2N messages + 1 tools blob (deduped across all calls). The O(N^2)
+  // model would have stored ~N*(2N) message copies. Allow a small margin.
+  const blobs = countBlobs(root);
+  assert.ok(blobs <= 2 * N + 5, `expected ~${2 * N + 1} blobs, got ${blobs}`);
+});
