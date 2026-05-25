@@ -406,9 +406,12 @@ test("a corrupt v2 manifest yields null, not a thrown error", () => {
   const session = "2020-02-02T00-00-00-000Z";
   const dir = path.join(root, session);
   fs.mkdirSync(dir, { recursive: true });
-  // v2 manifest whose request is a non-object so reconstruction would blow up
-  fs.writeFileSync(path.join(dir, "0001.json"), JSON.stringify({ v: 2, id: `${session}/0001`, session, seq: 1, request: 12345 }));
-  // Should not throw; the bad entry is simply skipped.
-  const loaded = loadSession(root, session);
-  assert.ok(Array.isArray(loaded));
+  // historyKey set but messages is a non-array → (messages||[]).map throws inside unpackRecord
+  fs.writeFileSync(path.join(dir, "0001.json"), JSON.stringify({
+    v: 2, id: `${session}/0001`, session, seq: 1, ts: 1, format: "anthropic",
+    request: { headers: {}, meta: { model: "m" }, historyKey: "messages", system: null, tools: null, messages: "not-an-array" },
+    response: null,
+  }));
+  const loaded = loadSession(root, session); // (use whatever name loadSession is imported as)
+  assert.equal(loaded.length, 0); // corrupt entry is dropped (readRecordFile returned null), not thrown
 });
