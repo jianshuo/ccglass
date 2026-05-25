@@ -377,3 +377,38 @@ test("listSessions ignores the blobs directory", () => {
   const sessions = listSessions(root); // listSessions must already be imported at top of file
   assert.deepEqual(sessions, [store.sessionId]); // NOT ["blobs", ...]
 });
+
+test("legacy NNNN.json is repacked to v2 in place on read, idempotently", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-mig-"));
+  const session = "2020-01-01T00-00-00-000Z";
+  const dir = path.join(root, session);
+  fs.mkdirSync(dir, { recursive: true });
+  const legacy = {
+    id: `${session}/0001`, session, seq: 1, ts: 1, format: "anthropic",
+    request: { headers: {}, body: { model: "m", messages: [{ role: "user", content: "hi" }], tools: [] } },
+    response: { status: 200, raw: "ok" },
+  };
+  const file = path.join(dir, "0001.json");
+  fs.writeFileSync(file, JSON.stringify(legacy, null, 2));
+
+  const loaded = loadSession(root, session);
+  assert.deepEqual(loaded[0].request.body.messages, [{ role: "user", content: "hi" }]);
+  const afterFirst = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.equal(afterFirst.v, 2);
+
+  const reloaded = loadSession(root, session);
+  assert.deepEqual(reloaded[0].request.body.messages, [{ role: "user", content: "hi" }]);
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).v, 2);
+});
+
+test("a corrupt v2 manifest yields null, not a thrown error", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-corrupt-"));
+  const session = "2020-02-02T00-00-00-000Z";
+  const dir = path.join(root, session);
+  fs.mkdirSync(dir, { recursive: true });
+  // v2 manifest whose request is a non-object so reconstruction would blow up
+  fs.writeFileSync(path.join(dir, "0001.json"), JSON.stringify({ v: 2, id: `${session}/0001`, session, seq: 1, request: 12345 }));
+  // Should not throw; the bad entry is simply skipped.
+  const loaded = loadSession(root, session);
+  assert.ok(Array.isArray(loaded));
+});

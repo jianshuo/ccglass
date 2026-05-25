@@ -162,13 +162,32 @@ function readRecordFile(file, id, root) {
     return null;
   }
   if (raw && raw.v === 2) {
-    const rec = unpackRecord(root, raw);
-    rec.id = id;
-    return rec;
+    try {
+      const rec = unpackRecord(root, raw);
+      rec.id = id;
+      return rec;
+    } catch {
+      return null;
+    }
   }
-  // Legacy full record: return as-is (auto-migration is added in Task 5).
+  // Legacy full record: hand it back, and opportunistically repack to v2 in place.
   raw.id = id;
+  tryMigrate(file, root, raw);
   return raw;
+}
+
+// Repack a legacy full record into a v2 manifest on disk. Atomic (temp + rename)
+// and best-effort: a read-only root (e.g. a legacy ./.ccglass) is silently skipped
+// so migration failure never breaks a read.
+function tryMigrate(file, root, rec) {
+  try {
+    const manifest = packRecord(root, rec);
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2));
+    fs.renameSync(tmp, file);
+  } catch {
+    /* read-only root or transient error — keep serving reads */
+  }
 }
 
 export function listSessionsMulti(roots) {
