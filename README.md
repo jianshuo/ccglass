@@ -153,8 +153,9 @@ ccglass kimi   [args...]      # inspect Kimi (via Claude Code)
 ccglass opencode [args...]    # inspect OpenCode (auto-detects upstream from OPENAI_BASE_URL)
 ccglass run --provider openai -- <cmd...>   # inspect any client
 ccglass proxy --provider openai            # proxy only — point your IDE at the proxy URL
-ccglass view                  # re-open the dashboard over saved .ccglass/ logs
-ccglass export <id> --format raw|md|json|har   # raw = readable HTTP transcript
+ccglass view                  # re-open the dashboard over saved logs (global + ./.ccglass)
+ccglass migrate               # copy this project's ./.ccglass into the global store
+ccglass export <session>/<seq> --format raw|md|json|har   # e.g. 2026-05-25T12-00-00-000Z/0003
 ```
 
 ### Options
@@ -165,7 +166,7 @@ ccglass export <id> --format raw|md|json|har   # raw = readable HTTP transcript
 | `--upstream <url>` | per provider | Override the upstream API |
 | `--port <n>` | auto | Dashboard port |
 | `--proxy-port <n>` | auto | Proxy port |
-| `--dir <path>` | `./.ccglass` | Where logs are stored |
+| `--dir <path>` | `~/.ccglass/sessions/<full-path>-<hash>` | Where new logs are written; also used as `migrate` destination. Dashboard still reads `./.ccglass` in the project. |
 | `--no-open` | off | The dashboard opens in your browser by default; pass this to skip it |
 | `--no-mcp` | off | Don't inject ccglass's self-inspection tools into Claude Code |
 | `--no-settings-override` | off | Don't force Claude Code onto the proxy via `--settings` (for when a provider switcher set `ANTHROPIC_BASE_URL`) |
@@ -174,9 +175,25 @@ ccglass export <id> --format raw|md|json|har   # raw = readable HTTP transcript
 
 ## Logs & secrets
 
-Captures are written to `./.ccglass/<session>/NNNN.json`. Auth tokens
-(`authorization`, `x-api-key`) are **masked by default** — pass `--no-redact`
-to keep them. Treat the log directory as sensitive regardless.
+New captures are written under `~/.ccglass/sessions/`, one directory per project.
+The folder name is the full resolved project path (slashes become `--`, Unicode
+kept) plus a short hash suffix, for example:
+
+`~/.ccglass/sessions/Users--you--Coding--ccglass-a1b2c3d4/<session>/NNNN.json`
+
+While you inspect a client, the dashboard merges logs from that global directory
+and from `./.ccglass` in the **current project** (if it still exists from older
+runs). The first time ccglass sees `./.ccglass` with data but no logs in the new
+global store yet, it prints a note suggesting `ccglass migrate`.
+
+`ccglass migrate` copies `.json` files from **this project's** `./.ccglass` into
+the store for the current directory (default: the global path above, or `--dir` if
+you passed it). It skips files that already exist at the destination, only runs in
+the current working directory, and exits with a clear message if there are no
+`.json` logs to copy (empty session folders alone are not enough).
+
+Auth tokens (`authorization`, `x-api-key`) are **masked by default** — pass
+`--no-redact` to keep them. Treat the log directory as sensitive regardless.
 
 ## Requirements
 

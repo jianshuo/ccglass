@@ -9,12 +9,12 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { proxyArgs } from "./child-args.js";
 import { spawnCommand } from "./spawn-command.js";
-import { Store, readEntryById, readEntryByIdMulti, listSessionsMulti, loadSessionMulti } from "./store.js";
+import { Store, hasCapturedLogs } from "./store.js";
+import { exportEntry, migrate } from "./log-cli.js";
 import { createProxy } from "./proxy.js";
 import { createServer } from "./server.js";
 import { resolveProvider, PROVIDERS, PICKABLE } from "./providers.js";
-import { renderExport } from "./export.js";
-import { globalRoot, legacyRoot } from "./paths.js";
+import { globalRoot, legacyRoot, readRoots } from "./paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")).version;
@@ -29,7 +29,8 @@ USAGE
   ccglass kimi   [args...]      Inspect Kimi (Moonshot, via Claude Code)
   ccglass opencode [args...]    Inspect OpenCode
   ccglass run [--provider P] -- <cmd...>   Inspect any client
-  ccglass view                  Open the dashboard over existing .ccglass/ logs
+  ccglass view                  Open the dashboard over saved logs
+  ccglass migrate               Copy ./.ccglass logs (this project only) to the global store
   ccglass export <id> [--format raw|md|json|har]
 
 OPTIONS
@@ -40,7 +41,7 @@ OPTIONS
   --base-url <url>    Alias for --upstream
   --port <n>          Dashboard port (default: auto)
   --proxy-port <n>    Proxy port (default: auto)
-  --dir <path>        Log directory (default: ~/.ccglass/sessions/<project>)
+  --dir <path>        Log directory (default: ~/.ccglass/sessions/<full-path>-<hash>)
   --no-open           Do NOT open the dashboard in your browser (opens by default)
   --no-redact         Do NOT mask auth tokens in saved logs
   --no-mcp            Do NOT inject ccglass's inspection tools into Claude Code
@@ -124,14 +125,28 @@ function pickProvider() {
 // session without touching the user's persistent config. When inspecting a
 // Claude-based client, point it at our own stdio MCP (src/mcp.js) so the agent
 // can query the very requests it just made. CCGLASS_ROOT must match this run's
-// log dir, or the MCP would read a stale ./.ccglass instead.
+// log dir, or the MCP would read a stale store instead.
+function maybeLegacyHint(cwd, captureDir) {
+  const legacy = legacyRoot(cwd);
+  if (!hasCapturedLogs(legacy)) return;
+  if (hasCapturedLogs(captureDir)) return;
+  process.stderr.write(
+    `  \x1b[33mnote:\x1b[0m found logs in ./.ccglass (this project directory only).\n` +
+    `        This run saves new captures under ${captureDir}\n` +
+    `        Run \`ccglass migrate\` to copy ./.ccglass from the current directory into that store.\n`
+  );
+}
+
 function mcpArgs(opts) {
   const config = {
     mcpServers: {
       ccglass: {
         command: process.execPath,
         args: [path.join(__dirname, "mcp.js")],
-        env: { CCGLASS_ROOT: opts.dir },
+        env: {
+          CCGLASS_ROOT: opts.dir,
+          CCGLASS_CWD: process.cwd(),
+        },
       },
     },
   };
@@ -240,6 +255,8 @@ async function wrap(command, args, opts) {
 
   if (provider.mcp && opts.mcp) args = [...mcpArgs(opts), ...args];
 
+  maybeLegacyHint(process.cwd(), opts.dir);
+
   const store = new Store({ root: opts.dir, redact: opts.redact, format: provider.format });
   const proxy = createProxy({ upstream, store });
   const dashboard = createServer({ roots: opts.readRoots, store });
@@ -316,23 +333,14 @@ async function view(opts) {
   if (opts.open) openBrowser(dashUrl);
 }
 
-function exportEntry(id, opts) {
-  const rec = readEntryByIdMulti(opts.readRoots, id);
-  if (!rec) {
-    process.stderr.write(`ccglass: no entry ${id}\n`);
-    process.exit(1);
-  }
-  process.stdout.write(renderExport(rec, opts.format || "raw").body + "\n");
-}
+export { exportEntry, migrate } from "./log-cli.js";
 
 export async function main(argv) {
   const { opts, rest } = parseArgs(argv);
   const cwd = process.cwd();
 
   if (!opts.dir) opts.dir = globalRoot(cwd);
-  const legacy = legacyRoot(cwd);
-  opts.readRoots = [opts.dir];
-  if (opts.dir !== legacy) opts.readRoots.push(legacy);
+  opts.readRoots = readRoots(opts.dir, cwd);
 
   const cmd = rest[0];
 
@@ -340,6 +348,7 @@ export async function main(argv) {
   if (rest.includes("-v") || rest.includes("--version")) return void process.stdout.write(VERSION + "\n");
 
   if (cmd === "view") return view(opts);
+  if (cmd === "migrate") return migrate(opts);
   if (cmd === "export") return exportEntry(rest[1], opts);
   if (cmd === "run") {
     const dashIdx = rest.indexOf("--");

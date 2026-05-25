@@ -9,7 +9,7 @@ const bin = path.join(__dirname, "..", "bin", "ccglass.js");
 
 function run(args, env = {}) {
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [bin, ...args], {
+    execFile(process.execPath, [bin, ...args], {
       env: { ...process.env, ...env },
       timeout: 5000,
     }, (err, stdout, stderr) => {
@@ -56,3 +56,4 @@ test("--version flag prints version and exits 0", async () => {
   assert.equal(code, 0);
   assert.match(stdout, /^\d+\.\d+\.\d+/);
 });
+

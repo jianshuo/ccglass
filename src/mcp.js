@@ -5,15 +5,14 @@
 //
 // Run: node src/mcp.js   (root resolved from $CCGLASS_ROOT or global path)
 
-import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { listSessions, loadSession, summarize, readEntryById } from "./store.js";
+import { listSessionsMulti, loadSessionMulti, summarize, readEntryByIdMulti } from "./store.js";
 import { getAdapter, detectFormat } from "./formats/index.js";
-import { globalRoot, legacyRoot } from "./paths.js";
+import { globalRoot, readRoots } from "./paths.js";
 
 // Parse one captured record's streamed response into { usage, cost } using the
 // same per-format adapter the dashboard uses (Anthropic / OpenAI / DeepSeek…).
@@ -24,44 +23,15 @@ function priceOf(rec) {
   return { usage, cost: adapter.cost(rec.request?.body?.model, usage), reassembled: resp };
 }
 
+const CWD = process.env.CCGLASS_CWD
+  ? path.resolve(process.env.CCGLASS_CWD)
+  : process.cwd();
+
 const ROOT = process.env.CCGLASS_ROOT
   ? path.resolve(process.env.CCGLASS_ROOT)
-  : globalRoot(process.cwd());
+  : globalRoot(CWD);
 
-const LEGACY_ROOT = legacyRoot(process.cwd());
-const ROOTS = [ROOT, LEGACY_ROOT];
-
-function allSessions() {
-  const seen = new Set();
-  const result = [];
-  for (const root of ROOTS) {
-    for (const s of listSessions(root)) {
-      if (!seen.has(s)) { seen.add(s); result.push({ session: s, root }); }
-    }
-  }
-  return result;
-}
-
-function findRoot(session) {
-  for (const root of ROOTS) {
-    if (fs.existsSync(path.join(root, session))) return root;
-  }
-  return ROOT;
-}
-
-function findEntry(id) {
-  for (const root of ROOTS) {
-    const rec = readEntryById(root, id);
-    if (rec) return rec;
-  }
-  return null;
-}
-
-// Latest session = most recent across all roots.
-const latestSession = () => {
-  const all = allSessions();
-  return all.length ? all[0] : null;
-};
+const ROOTS = readRoots(ROOT, CWD);
 
 const usd = (n) => `$${n.toFixed(4)}`;
 const json = (data) => ({ content: [{ type: "text", text: JSON.stringify(data, null, 2) }] });
@@ -77,8 +47,8 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
-    const sessions = allSessions().map(({ session: s, root }) => {
-      const recs = loadSession(root, s);
+    const sessions = listSessionsMulti(ROOTS).map((s) => {
+      const recs = loadSessionMulti(ROOTS, s);
       let cost = 0;
       for (const r of recs) cost += priceOf(r).cost.usd || 0;
       const ts = recs.map((r) => r.ts).filter(Boolean);
@@ -106,10 +76,10 @@ server.registerTool(
     },
   },
   async ({ session, limit = 20 }) => {
-    const entry = session ? { session, root: findRoot(session) } : latestSession();
-    if (!entry) return json({ error: "no sessions found", root: ROOT });
-    const rows = loadSession(entry.root, entry.session).map(summarize).slice(-limit).reverse();
-    return json({ session: entry.session, count: rows.length, requests: rows });
+    const sess = session || listSessionsMulti(ROOTS)[0];
+    if (!sess) return json({ error: "no sessions found", root: ROOT });
+    const rows = loadSessionMulti(ROOTS, sess).map(summarize).slice(-limit).reverse();
+    return json({ session: sess, count: rows.length, requests: rows });
   },
 );
 
@@ -124,7 +94,7 @@ server.registerTool(
     },
   },
   async ({ id }) => {
-    const rec = findEntry(id);
+    const rec = readEntryByIdMulti(ROOTS, id);
     if (!rec) return json({ error: "not found", id });
     const b = rec.request?.body || {};
     const sys = Array.isArray(b.system)

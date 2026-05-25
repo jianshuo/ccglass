@@ -58,8 +58,7 @@ function getEntry(roots, store, id) {
 }
 
 function apiSessions(roots, store) {
-  const sessions = listSessionsMulti(roots).map((s) => s.session);
-  return { sessions, live: store ? store.sessionId : null };
+  return { sessions: listSessionsMulti(roots), live: store ? store.sessionId : null };
 }
 
 function apiRequests(roots, store, url) {
