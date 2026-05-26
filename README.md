@@ -242,9 +242,11 @@ PRs for review; a maintainer merges and releases.
 
 ## Acknowledgments
 
-Heartfelt thanks to **庄表伟 ([@zhuangbiaowei](https://github.com/zhuangbiaowei))** for
-contributing **first-class DeepSeek-TUI support** ([#1](https://github.com/jianshuo/ccglass/pull/1)).
+ccglass is better because of the people who took the time to open a PR. Thank you,
+all of you. 🙏
 
+**庄表伟 ([@zhuangbiaowei](https://github.com/zhuangbiaowei))** contributed
+**first-class DeepSeek-TUI support** ([#1](https://github.com/jianshuo/ccglass/pull/1)).
 DeepSeek-TUI ships as a dual-binary coding agent — a `deepseek` dispatcher and a
 `deepseek-tui` runtime. 庄表伟 wired up both as native ccglass providers, pointing
 them at the proxy via `DEEPSEEK_BASE_URL` and reusing the existing
@@ -252,7 +254,29 @@ OpenAI-compatible Chat Completions adapter, so every DeepSeek request now shows 
 in the dashboard with zero extra setup. The contribution also added them to the
 interactive picker, documented usage across the README, and shipped provider
 regression tests to keep it working. Thank you for making ccglass better for the
-whole DeepSeek community. 🙏
+whole DeepSeek community.
+
+And huge thanks to everyone else who shipped improvements:
+
+- **[@KorenKrita](https://github.com/KorenKrita)** — built the richer dashboard with
+  latency, theming, model filtering, and session stats
+  ([#50](https://github.com/jianshuo/ccglass/pull/50)), added the **Reasonix** CLI
+  provider ([#49](https://github.com/jianshuo/ccglass/pull/49)), moved captured logs
+  into `~/.ccglass/sessions/` so they survive project-folder deletion
+  ([#39](https://github.com/jianshuo/ccglass/pull/39)), and fixed a CLI crash when
+  `xdg-open` fails ([#12](https://github.com/jianshuo/ccglass/pull/12)).
+- **Marcus ([@marcuslannister](https://github.com/marcuslannister))** — added the
+  token-usage summary across every session
+  ([#48](https://github.com/jianshuo/ccglass/pull/48)) and fixed Bedrock interception
+  to key off `ANTHROPIC_BEDROCK_BASE_URL`
+  ([#38](https://github.com/jianshuo/ccglass/pull/38)).
+- **[@ivanberry](https://github.com/ivanberry)** — added the `--env-var` option and
+  **OpenCode** provider support
+  ([#11](https://github.com/jianshuo/ccglass/pull/11)).
+- **[@ping-coding](https://github.com/ping-coding)** — fixed Windows Codex proxy
+  routing ([#20](https://github.com/jianshuo/ccglass/pull/20)).
+
+Thank you all. 🙏
 
 ## Star History
 
