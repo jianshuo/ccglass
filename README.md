@@ -141,6 +141,18 @@ Point your IDE's API base URL at the printed proxy address, then open the dashbo
   (`stop_reason`, tool calls, usage), for both the Anthropic and OpenAI wire
   formats; export any request to a readable **raw** HTTP transcript, Markdown,
   JSON, or HAR.
+- **Session summary** — for the selected session, the header shows rolled-up input
+  and output tokens, cache-hit %, and estimated cost.
+- **Per-model filter** — scope the request list, session summary, errors count,
+  and latency trend to one model from the session (**All models** by default),
+  including models seen on failed requests.
+- **Per-request latency** — end-to-end time on each list row; Overview also shows
+  total time, TTFT, generation window, and approximate input/output tok/s.
+- **Latency trend** — sparkline above the request list (avg / max per session).
+- **Copy as cURL** — from the Overview tab, copy a shell-ready replay of the
+  proxied request.
+- **Light / dark theme** — **System**, **Light**, or **Dark** in the header;
+  choice is saved in the browser.
 - **Self-inspection (MCP)** — when wrapping Claude Code, ccglass registers its
   own query tools so the agent can inspect the very requests it just made, right
   inside the chat (`--no-mcp` to skip).
