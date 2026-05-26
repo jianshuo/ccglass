@@ -15,6 +15,11 @@ import { createProxy } from "./proxy.js";
 import { createServer } from "./server.js";
 import { resolveProvider, PROVIDERS, PICKABLE } from "./providers.js";
 import { globalRoot, legacyRoot, readRoots } from "./paths.js";
+import {
+  reasonixConfigBaseUrl,
+  resolveDeepseekBaseUrlEnv,
+  resolveReasonixUpstream,
+} from "./reasonix-config.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")).version;
@@ -22,10 +27,11 @@ const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.j
 const HELP = `ccglass v${VERSION} — see what your coding agent sends to the model
 
 USAGE
-  ccglass                       Pick a client interactively (claude / codex / deepseek / kimi)
+  ccglass                       Pick a client interactively (claude / codex / deepseek / reasonix / kimi)
   ccglass claude [args...]      Inspect Claude Code
   ccglass codex  [args...]      Inspect Codex (OpenAI)
   ccglass deepseek [args...]    Inspect DeepSeek-TUI
+  ccglass reasonix [args...]    Inspect Reasonix
   ccglass kimi   [args...]      Inspect Kimi (Moonshot, via Claude Code)
   ccglass opencode [args...]    Inspect OpenCode
   ccglass run [--provider P] -- <cmd...>   Inspect any client
@@ -37,7 +43,7 @@ USAGE
 
 OPTIONS
   --provider <p>      Force format/env for \`run\`
-                      Built-in: claude|codex|codex-azure|deepseek|kimi|openai|opencode
+                      Built-in: claude|codex|codex-azure|deepseek|reasonix|kimi|openai|opencode
                               glm|ollama|lmstudio|openrouter|bedrock|vertex
   --upstream <url>    Override the upstream API (alias: --base-url)
   --base-url <url>    Alias for --upstream
@@ -59,6 +65,7 @@ EXAMPLES
   ccglass codex
   ccglass codex-azure         # set AZURE_OPENAI_ENDPOINT first
   ccglass deepseek
+  ccglass reasonix
   ccglass run --provider ollama -- my-openai-cli
   ccglass run --provider openrouter -- my-openai-cli
   ccglass run --provider glm -- my-openai-cli     # set OPENAI_BASE_URL first
@@ -239,8 +246,21 @@ async function wrap(command, args, opts) {
   const settingsBaseUrl = claudeBased ? settingsEnvBaseUrl(provider.envVar) : null;
   const codexBased = provider.command === "codex" && !provider.autoUpstream;
   const codexConfig = codexBased ? codexConfigBaseUrl() : null;
+  const reasonixBased = provider.command === "reasonix" || provider.command === "dsnix";
+  const reasonixEnvUrl = reasonixBased ? resolveDeepseekBaseUrlEnv() : null;
+  const reasonixConfigUrl = reasonixBased ? reasonixConfigBaseUrl() : null;
+  const reasonixDefault =
+    reasonixBased && provider.upstream !== "auto" ? provider.upstream : null;
+  const reasonixResolved = reasonixBased
+    ? resolveReasonixUpstream({
+        envUrl: reasonixEnvUrl,
+        configUrl: reasonixConfigUrl,
+        defaultUrl: reasonixDefault,
+      })
+    : null;
   let upstream = opts.upstream
     || (codexConfig && codexConfig.baseUrl)
+    || reasonixResolved
     || (provider.upstream === "auto" ? null : provider.upstream);
   // autoUpstream: resolve upstream from the same env var we're about to override
   if (!upstream && provider.autoUpstream) upstream = process.env[provider.envVar];
@@ -254,6 +274,11 @@ async function wrap(command, args, opts) {
   }
   if (!opts.upstream && codexConfig) {
     process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from Codex config.toml → ${codexConfig.baseUrl}\n`);
+  }
+  if (!opts.upstream && reasonixBased && reasonixEnvUrl && upstream === reasonixEnvUrl) {
+    process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from DEEPSEEK_BASE_URL env → ${reasonixEnvUrl}\n`);
+  } else if (!opts.upstream && reasonixBased && reasonixConfigUrl && upstream === reasonixConfigUrl) {
+    process.stderr.write(`  \x1b[36m●\x1b[0m ccglass: upstream from Reasonix config.json → ${reasonixConfigUrl}\n`);
   }
   // A provider switcher (e.g. cc-switch) may have set ANTHROPIC_BASE_URL directly in the
   // environment rather than in settings.json — pick it up so the proxy forwards to the

@@ -33,6 +33,37 @@ test("deepseek is available in the interactive picker", () => {
   assert.ok(PICKABLE.includes("deepseek"));
 });
 
+test("reasonix provider wraps Reasonix with OpenAI-compatible capture", () => {
+  const provider = resolveProvider("reasonix");
+
+  assert.equal(provider.label, "Reasonix");
+  assert.equal(provider.command, "reasonix");
+  assert.equal(provider.format, "reasonix");
+  assert.equal(provider.envVar, "DEEPSEEK_BASE_URL");
+  assert.equal(provider.upstream, "https://api.deepseek.com");
+});
+
+test("dsnix alias wraps the Reasonix shim binary directly", () => {
+  const provider = resolveProvider("dsnix");
+
+  assert.equal(provider.label, "Reasonix");
+  assert.equal(provider.command, "dsnix");
+  assert.equal(provider.format, "reasonix");
+  assert.equal(provider.envVar, "DEEPSEEK_BASE_URL");
+});
+
+test("reasonix can be used as a run provider override", () => {
+  const provider = resolveProvider("custom-agent", "reasonix");
+
+  assert.equal(provider.command, "custom-agent");
+  assert.equal(provider.format, "reasonix");
+  assert.equal(provider.envVar, "DEEPSEEK_BASE_URL");
+});
+
+test("reasonix is available in the interactive picker", () => {
+  assert.ok(PICKABLE.includes("reasonix"));
+});
+
 test("ollama preset uses OPENAI_BASE_URL and a fixed local upstream", () => {
   const provider = resolveProvider("ollama");
 

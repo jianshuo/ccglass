@@ -4,8 +4,9 @@
 
 import { anthropic } from "./anthropic.js";
 import { openai } from "./openai.js";
+import { reasonix } from "./reasonix.js";
 
-export const FORMATS = { anthropic, openai };
+export const FORMATS = { anthropic, openai, reasonix };
 
 export function getAdapter(name) {
   return FORMATS[name] || anthropic;

@@ -2,7 +2,7 @@
 
 **See exactly what your coding agent sends to the model.** A lightweight
 local logging reverse-proxy + web dashboard for **Claude Code, Codex,
-OpenCode, DeepSeek-TUI, Kimi, Ollama, OpenRouter, and more**.
+OpenCode, DeepSeek-TUI, Reasonix, Kimi, Ollama, OpenRouter, and more**.
 One command, like `ollama`:
 
 ```bash
@@ -22,14 +22,15 @@ Run with no arguments and `ccglass` asks which client to inspect:
     1) Claude Code
     2) Codex (OpenAI)
     3) DeepSeek-TUI
-    4) Kimi (Moonshot, via Claude Code)
-    5) OpenCode
+    4) Reasonix
+    5) Kimi (Moonshot, via Claude Code)
+    6) OpenCode
 
   >
 ```
 
 Or name it directly: `ccglass claude`, `ccglass codex`, `ccglass deepseek`,
-`ccglass deepseek-tui`, or `ccglass kimi`.
+`ccglass deepseek-tui`, `ccglass reasonix`, `ccglass dsnix`, or `ccglass kimi`.
 
 `ccglass` starts a proxy, points the client at it via the right base-URL env var,
 launches it for you, and opens a dashboard where you watch every request in real
@@ -57,6 +58,8 @@ pinning.
 | `codex` | Codex | `OPENAI_BASE_URL` | api.openai.com | OpenAI Responses / Chat |
 | `deepseek` | DeepSeek-TUI dispatcher | `DEEPSEEK_BASE_URL` | api.deepseek.com | OpenAI Chat |
 | `deepseek-tui` | DeepSeek-TUI runtime | `DEEPSEEK_BASE_URL` | api.deepseek.com | OpenAI Chat |
+| `reasonix` | Reasonix | `DEEPSEEK_BASE_URL` | api.deepseek.com | OpenAI Chat |
+| `dsnix` | Reasonix (`dsnix` alias) | `DEEPSEEK_BASE_URL` | api.deepseek.com | OpenAI Chat |
 | `kimi` | Claude Code → Moonshot | `ANTHROPIC_BASE_URL` | api.moonshot.ai/anthropic | Anthropic Messages |
 | `opencode` | OpenCode | `OPENAI_BASE_URL` | auto (from env) | OpenAI Chat |
 | `ollama` | any Ollama-backed client | `OPENAI_BASE_URL` | 127.0.0.1:11434 | OpenAI Chat |
@@ -72,6 +75,7 @@ pinning.
 - **Codex** — captures traffic when Codex is in **API-key mode** (`OPENAI_API_KEY`). If Codex is authenticated via **ChatGPT login**, it uses a WebSocket transport (`wss://chatgpt.com/...`) that bypasses `OPENAI_BASE_URL` — the dashboard will be empty. Run `codex doctor` to check your auth mode; if it shows `auth mode: chatgpt`, switch to API-key mode to use ccglass.
 - **Kimi** — runs through Claude Code against Moonshot's Anthropic-compatible endpoint; set `ANTHROPIC_AUTH_TOKEN` to your Moonshot key.
 - **DeepSeek-TUI** — OpenAI-compatible Chat Completions; set `DEEPSEEK_API_KEY`.
+- **Reasonix** — OpenAI-compatible Chat Completions; set `DEEPSEEK_API_KEY`.
 - **OpenCode** — auto-detects upstream from `OPENAI_BASE_URL`; set it before running. Use `--env-var` if your OpenCode provider uses a different env var name.
 - **Ollama / LM Studio** — no key needed for local models; pass `--upstream` if your server runs on a non-default address.
 - **OpenRouter** — set `OPENAI_API_KEY` to your OpenRouter key.
@@ -149,6 +153,8 @@ ccglass claude [args...]      # inspect Claude Code (args pass through, e.g. --r
 ccglass codex  [args...]      # inspect Codex
 ccglass deepseek [args...]    # inspect DeepSeek-TUI (dispatcher)
 ccglass deepseek-tui [args...] # inspect DeepSeek-TUI runtime directly
+ccglass reasonix [args...]    # inspect Reasonix
+ccglass dsnix    [args...]    # inspect Reasonix (dsnix alias)
 ccglass kimi   [args...]      # inspect Kimi (via Claude Code)
 ccglass opencode [args...]    # inspect OpenCode (auto-detects upstream from OPENAI_BASE_URL)
 ccglass run --provider openai -- <cmd...>   # inspect any client
@@ -164,7 +170,7 @@ ccglass export <session>/<seq> --format raw|md|json|har   # e.g. 2026-05-25T12-0
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--provider <p>` | from command | Force format/env for `run` (`claude`/`codex`/`deepseek`/`kimi`/`openai`) |
+| `--provider <p>` | from command | Force format/env for `run` (`claude`/`codex`/`deepseek`/`reasonix`/`kimi`/`openai`) |
 | `--upstream <url>` | per provider | Override the upstream API |
 | `--port <n>` | auto | Dashboard port |
 | `--proxy-port <n>` | auto | Proxy port |

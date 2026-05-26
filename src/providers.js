@@ -43,6 +43,22 @@ export const PROVIDERS = {
     upstream: "https://api.deepseek.com",
     note: "DeepSeek-TUI uses OpenAI-compatible Chat Completions. Make sure your DeepSeek key is set (DEEPSEEK_API_KEY).",
   },
+  reasonix: {
+    label: "Reasonix",
+    command: "reasonix",
+    format: "reasonix",
+    envVar: "DEEPSEEK_BASE_URL",
+    upstream: "https://api.deepseek.com",
+    note: "Reasonix uses OpenAI-compatible Chat Completions. Make sure your DeepSeek key is set (DEEPSEEK_API_KEY).",
+  },
+  dsnix: {
+    label: "Reasonix",
+    command: "dsnix",
+    format: "reasonix",
+    envVar: "DEEPSEEK_BASE_URL",
+    upstream: "https://api.deepseek.com",
+    note: "Reasonix uses OpenAI-compatible Chat Completions. Make sure your DeepSeek key is set (DEEPSEEK_API_KEY).",
+  },
   kimi: {
     label: "Kimi (Moonshot, via Claude Code)",
     command: "claude",
@@ -126,7 +142,7 @@ export const PROVIDERS = {
   },
 };
 
-export const PICKABLE = ["claude", "codex", "deepseek", "kimi", "opencode"]; // shown in the no-arg picker
+export const PICKABLE = ["claude", "codex", "deepseek", "reasonix", "kimi", "opencode"]; // shown in the no-arg picker
 
 // Resolve a provider from a CLI token (e.g. "claude"), falling back to a custom
 // command wrapped under an explicit --provider.

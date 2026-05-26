@@ -144,12 +144,12 @@ export const openai = {
 
   // ---- streamed/non-streamed response → normalized -----------------------
 
-  reassemble(raw) {
+  reassemble(raw, { normalizeUsage = normUsage } = {}) {
     if (!raw) return null;
     const trimmed = raw.trimStart();
     if (trimmed.startsWith("{")) {
       try {
-        return normalizeFinal(JSON.parse(trimmed));
+        return normalizeFinal(JSON.parse(trimmed), normalizeUsage);
       } catch {
         return { streamed: false, raw: trimmed };
       }
@@ -222,7 +222,7 @@ export const openai = {
       }
       content.push({ type: "tool_use", name: tc.name, input });
     }
-    return { streamed: true, model, stop_reason, usage: normUsage(usage), content };
+    return { streamed: true, model, stop_reason, usage: normalizeUsage(usage), content };
   },
 
   estimateTokens(body = {}) {
@@ -264,7 +264,7 @@ function normUsage(u = {}) {
   };
 }
 
-function normalizeFinal(json) {
+function normalizeFinal(json, normalizeUsage = normUsage) {
   // Responses API non-streaming
   if (json.output || json.object === "response") {
     const content = [];
@@ -286,7 +286,7 @@ function normalizeFinal(json) {
         content.push({ type: "tool_use", name: item.name, input });
       }
     }
-    return { streamed: false, model: json.model, stop_reason: json.status, usage: normUsage(json.usage), content };
+    return { streamed: false, model: json.model, stop_reason: json.status, usage: normalizeUsage(json.usage), content };
   }
   // Chat Completions non-streaming
   if (json.choices) {
@@ -302,7 +302,7 @@ function normalizeFinal(json) {
       }
       content.push({ type: "tool_use", name: tc.function?.name, input });
     }
-    return { streamed: false, model: json.model, stop_reason: json.choices[0]?.finish_reason, usage: normUsage(json.usage), content };
+    return { streamed: false, model: json.model, stop_reason: json.choices[0]?.finish_reason, usage: normalizeUsage(json.usage), content };
   }
   if (json.error) return { streamed: false, error: json.error, usage: {} };
   return { streamed: false, raw: JSON.stringify(json) };
