@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { proxyArgs } from "./child-args.js";
 import { spawnCommand } from "./spawn-command.js";
 import { Store, hasCapturedLogs } from "./store.js";
-import { exportEntry, migrate, repack, rmCmd } from "./log-cli.js";
+import { exportEntry, migrate, repack, rmCmd, usageCmd } from "./log-cli.js";
 import { createProxy } from "./proxy.js";
 import { createServer } from "./server.js";
 import { resolveProvider, PROVIDERS, PICKABLE } from "./providers.js";
@@ -33,6 +33,7 @@ USAGE
   ccglass migrate               Copy ./.ccglass logs (this project only) to the global store
   ccglass repack [session]      Re-pack stored captures into the deduped v2 format
   ccglass rm <session>          Delete a session and reclaim its orphaned blobs
+  ccglass usage [--by-session] [--format json] Summarize token usage and USD cost across every session
   ccglass export <id> [--format raw|md|json|har]
 
 OPTIONS
@@ -66,6 +67,11 @@ EXAMPLES
   ccglass run --upstream https://my.api/v1 --env-var MY_BASE_URL -- my-tool
   ccglass export <id> --format raw > request.http`;
 
+// Note: this walks the full argv with no `--` sentinel, so any ccglass flag
+// (--port, --no-open, --format, --by-session, …) is consumed even if it
+// appears after `--`. In practice none of the wrapped clients share a flag
+// name with ccglass, so this hasn't caused real issues. Revisit if a wrapped
+// tool ever needs verbatim passthrough.
 function parseArgs(argv) {
   const opts = { dir: null, redact: true, mcp: true, open: true, settingsOverride: true };
   const rest = [];
@@ -83,6 +89,7 @@ function parseArgs(argv) {
     else if (a === "--no-settings-override") opts.settingsOverride = false;
     else if (a === "--env-var") opts.envVar = argv[++i];
     else if (a === "--format") opts.format = argv[++i];
+    else if (a === "--by-session") opts.bySession = true;
     else rest.push(a);
   }
   return { opts, rest };
@@ -394,7 +401,7 @@ async function view(opts) {
   if (opts.open) openBrowser(dashUrl);
 }
 
-export { exportEntry, migrate, repack, rmCmd } from "./log-cli.js";
+export { exportEntry, migrate, repack, rmCmd, usageCmd } from "./log-cli.js";
 
 export async function main(argv) {
   const { opts, rest } = parseArgs(argv);
@@ -412,6 +419,7 @@ export async function main(argv) {
   if (cmd === "migrate") return migrate(opts);
   if (cmd === "repack") { opts.session = rest[1]; return repack(opts); }
   if (cmd === "rm") return rmCmd(rest[1], opts);
+  if (cmd === "usage") return usageCmd(opts);
   if (cmd === "export") return exportEntry(rest[1], opts);
   if (cmd === "run") {
     const dashIdx = rest.indexOf("--");

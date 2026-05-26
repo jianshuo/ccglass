@@ -13,6 +13,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { listSessionsMulti, loadSessionMulti, summarize, readEntryByIdMulti } from "./store.js";
 import { getAdapter, detectFormat } from "./formats/index.js";
 import { globalRoot, readRoots } from "./paths.js";
+import { summarizeUsage } from "./usage.js";
 
 // Parse one captured record's streamed response into { usage, cost } using the
 // same per-format adapter the dashboard uses (Anthropic / OpenAI / DeepSeek…).
@@ -43,24 +44,39 @@ server.registerTool(
   {
     title: "List capture sessions",
     description:
-      "List all ccglass capture sessions (newest first) with entry count, time range, and total USD cost.",
+      "List all ccglass capture sessions (newest first) with entry count, time range, token breakdown, and total USD cost.",
     inputSchema: {},
   },
   async () => {
-    const sessions = listSessionsMulti(ROOTS).map((s) => {
-      const recs = loadSessionMulti(ROOTS, s);
-      let cost = 0;
-      for (const r of recs) cost += priceOf(r).cost.usd || 0;
-      const ts = recs.map((r) => r.ts).filter(Boolean);
-      return {
-        session: s,
-        entries: recs.length,
-        from: ts.length ? new Date(Math.min(...ts)).toISOString() : null,
-        to: ts.length ? new Date(Math.max(...ts)).toISOString() : null,
-        cost: usd(cost),
-      };
-    });
+    // bySession is already newest-first (inherits listSessionsMulti order).
+    const summary = summarizeUsage(ROOTS);
+    const sessions = summary.bySession.map((s) => ({
+      session: s.session,
+      entries: s.entries,
+      from: s.from,
+      to: s.to,
+      tokens: {
+        input: s.input,
+        output: s.output,
+        cacheRead: s.cacheRead,
+        cacheWrite: s.cacheWrite,
+      },
+      cost: usd(s.usd),
+    }));
     return json({ root: ROOT, count: sessions.length, sessions });
+  },
+);
+
+server.registerTool(
+  "usage_summary",
+  {
+    title: "Token usage summary",
+    description:
+      "Aggregate token usage and USD cost across every captured session. Returns totals, per-model breakdown (sorted by spend), per-session breakdown, the date range covered, and an `unmeasured` count of records whose response had no parseable usage (in-flight, errored, non-LLM).",
+    inputSchema: {},
+  },
+  async () => {
+    return json({ root: ROOT, ...summarizeUsage(ROOTS) });
   },
 );
 
