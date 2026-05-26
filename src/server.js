@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { summarize, listSessionsMulti, loadSessionMulti, readEntryByIdMulti } from "./store.js";
 import { getAdapter, detectFormat } from "./formats/index.js";
+import { aggregateSessionStats, latencyMs, requestTiming, sessionModels } from "./session-stats.js";
 import { diffBlockLists } from "./diff.js";
 import { renderExport } from "./export.js";
 
@@ -36,6 +37,7 @@ export function createServer({ roots, store }) {
     try {
       if (p === "/api/sessions") return json(res, apiSessions(roots, store));
       if (p === "/api/requests") return json(res, apiRequests(roots, store, url));
+      if (p === "/api/session-stats") return json(res, apiSessionStats(roots, store, url));
       if (p.startsWith("/api/request/")) return json(res, apiRequest(roots, store, decodeURIComponent(p.slice("/api/request/".length))));
       if (p === "/api/diff") return json(res, apiDiff(roots, store, url));
       if (p === "/api/export") return apiExport(roots, store, url, res);
@@ -61,11 +63,27 @@ function apiSessions(roots, store) {
   return { sessions: listSessionsMulti(roots), live: store ? store.sessionId : null };
 }
 
+function sessionRecords(roots, store, session) {
+  if (store && (!session || session === store.sessionId)) return store.entries;
+  if (!session) return [];
+  return loadSessionMulti(roots, session);
+}
+
 function apiRequests(roots, store, url) {
   const session = url.searchParams.get("session");
-  if (store && (!session || session === store.sessionId)) return { entries: store.list() };
-  if (!session) return { entries: [] };
-  return { entries: loadSessionMulti(roots, session).map(summarize) };
+  return { entries: sessionRecords(roots, store, session).map(summarize) };
+}
+
+function apiSessionStats(roots, store, url) {
+  const session = url.searchParams.get("session");
+  if (!session) return { error: "session required" };
+  const records = sessionRecords(roots, store, session);
+  const model = url.searchParams.get("model") || "all";
+  return {
+    session,
+    models: sessionModels(records),
+    ...aggregateSessionStats(records, { model }),
+  };
 }
 
 function apiRequest(roots, store, id) {
@@ -76,8 +94,11 @@ function apiRequest(roots, store, id) {
   const body = rec.request?.body || {};
   const response = rec.response?.raw ? A.reassemble(rec.response.raw) : rec.response;
   const usage = response?.usage || {};
+  const timing = requestTiming(rec, usage);
   return {
     ...rec,
+    latencyMs: latencyMs(rec),
+    timing,
     format: fmt,
     parsed: {
       format: fmt,

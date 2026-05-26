@@ -8,6 +8,18 @@ const el = (tag, props = {}, ...kids) => {
 };
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 const fmt = (n) => (n == null ? "—" : n.toLocaleString());
+const fmtMs = (ms) => {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(ms >= 10_000 ? 1 : 2)}s`;
+  return `${(ms / 60_000).toFixed(1)}m`;
+};
+const fmtTps = (n) => {
+  if (n == null || !Number.isFinite(n)) return "—";
+  if (n >= 100) return `${Math.round(n)} tok/s`;
+  if (n >= 10) return `${n.toFixed(1)} tok/s`;
+  return `${n.toFixed(2)} tok/s`;
+};
 
 function statusClass(status) {
   if (status == null) return "pending";
@@ -30,7 +42,55 @@ function groupRetries(entries, windowMs = 60_000) {
   return out;
 }
 
-const state = { session: null, live: null, entries: [], selected: null, tab: "overview", diff: false, picks: [], errorsOnly: false };
+const state = {
+  session: null, live: null, entries: [], sessionStats: null, sessionModels: [],
+  modelFilter: "all",
+  selected: null, tab: "overview", diff: false, picks: [], errorsOnly: false,
+};
+
+function entryModel(e) {
+  return e.model ?? null;
+}
+
+function entriesForModelFilter(entries, modelFilter = state.modelFilter) {
+  if (!modelFilter || modelFilter === "all") return entries;
+  return entries.filter((e) => entryModel(e) === modelFilter);
+}
+
+/** Union of models from live entries and last API snapshot (entries win for SSE). */
+function collectSessionModels() {
+  const set = new Set(state.sessionModels);
+  for (const e of state.entries) {
+    const m = entryModel(e);
+    if (m) set.add(m);
+  }
+  return [...set].sort();
+}
+
+function visibleEntries() {
+  let visible = entriesForModelFilter(state.entries);
+  if (state.errorsOnly) {
+    visible = visible.filter((e) => {
+      const sc = statusClass(e.status);
+      return sc === "4xx" || sc === "5xx" || e.error != null;
+    });
+  }
+  return visible;
+}
+
+function clearDetailIfHidden() {
+  if (!state.selected) return;
+  if (visibleEntries().some((e) => e.id === state.selected)) return;
+  state.selected = null;
+  state.picks = [];
+  $("#detail").innerHTML = '<div class="empty">Select a request, or start chatting in Claude Code.</div>';
+}
+
+function sessionStatsQuery() {
+  const q = new URLSearchParams({ session: state.session });
+  if (state.modelFilter && state.modelFilter !== "all") q.set("model", state.modelFilter);
+  return q.toString();
+}
 
 async function api(path) {
   const r = await fetch(path);
@@ -55,13 +115,99 @@ async function loadSessions() {
 
 async function loadList() {
   if (!state.session) return;
-  const { entries } = await api("/api/requests?session=" + encodeURIComponent(state.session));
+  const session = encodeURIComponent(state.session);
+  const [{ entries }, stats] = await Promise.all([
+    api("/api/requests?session=" + session),
+    api("/api/session-stats?" + sessionStatsQuery()),
+  ]);
   state.entries = entries;
+  applySessionStats(stats);
+  renderModelFilter();
+  renderSessionStats();
+  renderLatencyTrend();
   renderList();
 }
 
+function applySessionStats(stats) {
+  if (stats.error) {
+    state.sessionStats = null;
+    state.sessionModels = [];
+    return;
+  }
+  state.sessionStats = stats;
+  state.sessionModels = stats.models || [];
+}
+
+function renderModelFilter() {
+  const sel = $("#modelFilter");
+  const models = collectSessionModels();
+  if (!models.length) {
+    sel.hidden = true;
+    state.modelFilter = "all";
+    return;
+  }
+  const prev = state.modelFilter || "all";
+  sel.innerHTML =
+    `<option value="all">All models</option>` +
+    models.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+  sel.value = prev !== "all" && models.includes(prev) ? prev : "all";
+  if (sel.value !== state.modelFilter) state.modelFilter = sel.value;
+  sel.hidden = false;
+}
+
+function renderSessionStats() {
+  const box = $("#sessionStats");
+  const s = state.sessionStats;
+  if (!s || !state.session) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+  const pct = Math.round((s.cacheHitRate || 0) * 100);
+  const scope =
+    state.modelFilter !== "all"
+      ? `<span class="scope">${esc(state.modelFilter)}</span>`
+      : "";
+  box.innerHTML =
+    scope +
+    `<span><b>${fmt(s.totalInput)}</b> in</span>` +
+    `<span><b>${fmt(s.totalOutput)}</b> out</span>` +
+    `<span><b>${pct}%</b> cache</span>` +
+    `<span><b>$${(s.totalUsd || 0).toFixed(4)}</b></span>`;
+}
+
+function renderLatencyTrend() {
+  const box = $("#latencyTrend");
+  const scoped = entriesForModelFilter(state.entries);
+  const done = scoped.filter((e) => e.latencyMs != null);
+  if (!done.length && !scoped.some((e) => e.pending)) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  const max = Math.max(...done.map((e) => e.latencyMs), 1);
+  const avg = done.length ? done.reduce((a, e) => a + e.latencyMs, 0) / done.length : 0;
+  const bars = scoped.map((e) => {
+    const h = e.latencyMs != null ? Math.max(4, Math.round((e.latencyMs / max) * 100)) : 8;
+    const title = e.latencyMs != null
+      ? `#${e.seq} ${esc(e.model || "?")} ${fmtMs(e.latencyMs)}`
+      : `#${e.seq} ${esc(e.model || "?")} pending`;
+    const cls = e.latencyMs != null ? "bar" : "bar pending";
+    return `<div class="${cls}" style="height:${h}%" title="${title}"></div>`;
+  }).join("");
+  const modelNote =
+    state.modelFilter !== "all" ? ` · ${esc(state.modelFilter)}` : "";
+  box.hidden = false;
+  box.innerHTML =
+    `<div class="title">Latency trend${modelNote}</div>` +
+    `<div class="bars">${bars}</div>` +
+    `<div class="meta">avg ${fmtMs(Math.round(avg))} · max ${fmtMs(max)} · ${done.length}/${scoped.length} done</div>`;
+}
+
 function updateErrorsBtn() {
-  const count = state.entries.filter((e) => {
+  const pool = entriesForModelFilter(state.entries);
+  const count = pool.filter((e) => {
     const sc = statusClass(e.status);
     return sc === "4xx" || sc === "5xx" || e.error != null;
   }).length;
@@ -74,13 +220,7 @@ function renderList() {
   updateErrorsBtn();
   const list = $("#list");
   list.innerHTML = "";
-  let visible = state.entries;
-  if (state.errorsOnly) {
-    visible = visible.filter((e) => {
-      const sc = statusClass(e.status);
-      return sc === "4xx" || sc === "5xx" || e.error != null;
-    });
-  }
+  const visible = visibleEntries();
   const grouped = groupRetries(visible);
   for (const e of grouped) {
     const sc = e.error ? "5xx" : statusClass(e.status);
@@ -92,6 +232,7 @@ function renderList() {
     const statusText = e.error ? "transport error" : (e.pending ? "pending…" : "HTTP " + e.status);
     const sub = el("div", { className: "sub" },
       el("span", { className: "time", textContent: e.ts ? new Date(e.ts).toLocaleTimeString() : "" }),
+      e.latencyMs != null ? el("span", { className: "latency", textContent: ` ${fmtMs(e.latencyMs)}` }) : null,
       el("span", { textContent: ` ${e.format ? e.format + " · " : ""}${e.nMessages} msg · ${e.nTools} tools · ` }),
       el("span", { className: statusTxtClass, textContent: statusText }));
     if (e.nToolUse) sub.append(el("span", { className: "toolcalls", title: "tool calls in this request", textContent: ` 🔧${e.nToolUse}` }));
@@ -142,7 +283,58 @@ function renderDetail() {
   d.append(tabs);
   const pane = el("div", { className: "pane" });
   pane.innerHTML = paneHtml(rec, state.tab);
+  const curlBtn = pane.querySelector("[data-copy-curl]");
+  if (curlBtn) curlBtn.onclick = () => copyCurl(rec, curlBtn);
   d.append(pane);
+}
+
+const CURL_SKIP_HEADERS = new Set([
+  "connection", "keep-alive", "proxy-connection", "transfer-encoding",
+  "upgrade", "te", "trailers", "accept-encoding", "content-length", "host",
+]);
+
+function resolveRequestUrl(req) {
+  const raw = req?.url || "/";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const headers = req?.headers || {};
+  const host = headers.host || headers.Host;
+  if (!host) return raw;
+  const h = String(Array.isArray(host) ? host[0] : host);
+  const proto = /^(127\.|localhost|\[::1\])/i.test(h) ? "http" : "https";
+  return `${proto}://${h}${raw.startsWith("/") ? raw : `/${raw}`}`;
+}
+
+function shellQuote(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
+function buildCurl(rec) {
+  const req = rec.request || {};
+  const method = (req.method || "GET").toUpperCase();
+  const parts = [`curl -sS -X ${method}`, shellQuote(resolveRequestUrl(req))];
+  for (const [k, v] of Object.entries(req.headers || {})) {
+    if (CURL_SKIP_HEADERS.has(k.toLowerCase())) continue;
+    const val = Array.isArray(v) ? v.join(", ") : v;
+    if (val == null || val === "") continue;
+    parts.push(`-H ${shellQuote(`${k}: ${val}`)}`);
+  }
+  if (req.body != null && method !== "GET" && method !== "HEAD") {
+    const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+    parts.push(`-d ${shellQuote(body)}`);
+  }
+  return parts.join(" \\\n  ");
+}
+
+async function copyCurl(rec, btn) {
+  const text = buildCurl(rec);
+  try {
+    await navigator.clipboard.writeText(text);
+    const prev = btn.textContent;
+    btn.textContent = "copied!";
+    setTimeout(() => { btn.textContent = prev; }, 1200);
+  } catch {
+    window.prompt("Copy curl:", text);
+  }
 }
 
 function paneHtml(rec, tab) {
@@ -161,10 +353,14 @@ function paneHtml(rec, tab) {
 function overviewHtml(rec, parsed, view) {
   const c = parsed.cost || {};
   const u = parsed.response?.usage || {};
+  const t = rec.timing || {};
   const body = rec.request?.body || {};
   const status = rec.response?.status ?? null;
   const sc = statusClass(status);
   const dl = (f) => `<a class="dl" href="/api/export?id=${encodeURIComponent(rec.id)}&format=${f}">⬇ ${f}</a>`;
+  const lat = rec.latencyMs != null ? fmtMs(rec.latencyMs) : "—";
+  const ttft = t.ttftMs != null ? fmtMs(t.ttftMs) : "—";
+  const gen = t.genMs != null ? fmtMs(t.genMs) : "—";
   const statusCardCls = sc === "5xx" ? "err-card" : sc === "4xx" ? "warn-card" : "";
   const statusCardVal = status != null ? "HTTP " + status : "—";
   const errBody = parsed.response?.error ?? rec.response?.error ?? null;
@@ -172,6 +368,15 @@ function overviewHtml(rec, parsed, view) {
     ? `<div class="block" style="border-color:var(--del)"><div class="h" style="color:var(--del)">error</div><pre style="color:var(--del)">${esc(typeof errBody === "string" ? errBody : JSON.stringify(errBody, null, 2))}</pre></div>`
     : "";
   return `
+    <div class="overview-section">Latency</div>
+    <div class="cards">
+      ${card("total", lat, undefined, "timing-card")}
+      ${card("TTFT", ttft, "first byte", "timing-card")}
+      ${card("generation", gen, "stream window", "timing-card")}
+      ${card("in speed", fmtTps(t.inTps), "pre-1st-byte", "timing-card")}
+      ${card("out speed", fmtTps(t.outTps), "after 1st-byte", "timing-card")}
+    </div>
+    <div class="overview-section">Request</div>
     <div class="cards">
       ${statusCardCls ? card("status", statusCardVal, undefined, statusCardCls) : ""}
       ${card("format", parsed.format || rec.format || "—")}
@@ -185,7 +390,7 @@ function overviewHtml(rec, parsed, view) {
       ${card("stop", parsed.response?.stop_reason || "—")}
     </div>
     ${errHtml}
-    <div>${dl("raw")}${dl("md")}${dl("json")}${dl("har")}</div>
+    <div class="export-row">${dl("raw")}${dl("md")}${dl("json")}${dl("har")}<button type="button" class="dl copy-curl" data-copy-curl>copy curl</button></div>
     <div class="block"><div class="h">request line</div><pre>${esc(rec.request?.method)} ${esc(rec.request?.url)}</pre></div>
     <p style="color:var(--muted)">${view.system.length} system blocks · ${view.messages.length} messages · ${view.tools.length} tools</p>`;
 }
@@ -389,13 +594,37 @@ function connectStream() {
       const i = state.entries.findIndex((e) => e.id === s.id);
       if (i >= 0) state.entries[i] = s;
       else state.entries.push(s);
+      renderModelFilter();
+      renderLatencyTrend();
       renderList();
+      clearDetailIfHidden();
       if (s.id === state.selected) loadDetail(s.id);
+      if (!s.pending) loadSessionStatsQuiet();
     };
   } catch {}
 }
 
-$("#session").onchange = (e) => { state.session = e.target.value; state.picks = []; loadList(); };
+async function loadSessionStatsQuiet() {
+  if (!state.session) return;
+  const stats = await api("/api/session-stats?" + sessionStatsQuery());
+  applySessionStats(stats);
+  renderModelFilter();
+  renderSessionStats();
+}
+
+$("#session").onchange = (e) => {
+  state.session = e.target.value;
+  state.picks = [];
+  state.modelFilter = "all";
+  loadList();
+};
+$("#modelFilter").onchange = (e) => {
+  state.modelFilter = e.target.value;
+  loadSessionStatsQuiet();
+  renderLatencyTrend();
+  renderList();
+  clearDetailIfHidden();
+};
 $("#errorsBtn").onclick = () => { state.errorsOnly = !state.errorsOnly; renderList(); };
 $("#diffBtn").onclick = (e) => {
   state.diff = !state.diff;
@@ -405,5 +634,12 @@ $("#diffBtn").onclick = (e) => {
   renderList();
   if (!state.diff && state.selected) loadDetail(state.selected);
 };
+
+const themeCtl = window.ccglassTheme?.initTheme?.();
+const themeSelect = $("#themeSelect");
+if (themeCtl && themeSelect) {
+  themeSelect.value = themeCtl.getMode();
+  themeSelect.onchange = () => themeCtl.setMode(themeSelect.value);
+}
 
 loadSessions().then(connectStream);

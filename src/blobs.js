@@ -51,9 +51,11 @@ export function packRecord(root, rec) {
 
   const base = {
     v: 2,
-    id: rec.id, session: rec.session, seq: rec.seq, ts: rec.ts, format: rec.format,
+    id: rec.id, session: rec.session, seq: rec.seq, ts: rec.ts,
+    format: rec.format,
     response: rec.response ?? null,
   };
+  if (rec.startedAt != null) base.startedAt = rec.startedAt;
 
   // Raw body: proxy stores non-JSON payloads as strings and empty bodies as null/array.
   // These can't be split into meta+blobs — store verbatim.
@@ -143,7 +145,9 @@ export function unpackRecord(root, manifest) {
     const { rawBody, ...envelope } = r;
     return {
       id: manifest.id, session: manifest.session, seq: manifest.seq,
-      ts: manifest.ts, format: manifest.format,
+      ts: manifest.ts,
+      ...(manifest.startedAt != null ? { startedAt: manifest.startedAt } : {}),
+      format: manifest.format,
       request: { ...envelope, body: rawBody },
       response: manifest.response ?? null,
     };
@@ -159,7 +163,9 @@ export function unpackRecord(root, manifest) {
   if (historyKey) body[historyKey] = (messages || []).map((ref) => safeBlob(root, ref));
   return {
     id: manifest.id, session: manifest.session, seq: manifest.seq,
-    ts: manifest.ts, format: manifest.format,
+    ts: manifest.ts,
+    ...(manifest.startedAt != null ? { startedAt: manifest.startedAt } : {}),
+    format: manifest.format,
     request: { ...envelope, body },
     response: manifest.response ?? null,
   };

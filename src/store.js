@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { packRecord, unpackRecord, gcBlobs } from "./blobs.js";
+import { latencyMs, recordModel } from "./session-stats.js";
 
 const mask = (v) =>
   String(v)
@@ -94,15 +95,18 @@ export function summarize(rec) {
     for (const blk of c) if (blk?.type === "tool_use") nToolUse++;
     if (Array.isArray(m?.tool_calls)) nToolUse += m.tool_calls.length;
   }
+  const ms = latencyMs(rec);
   return {
     id: rec.id,
     session: rec.session,
     seq: rec.seq,
     ts: rec.ts,
+    startedAt: rec.startedAt ?? rec.ts ?? null,
+    latencyMs: ms,
     format: rec.format || null,
     method: rec.request?.method,
     url: rec.request?.url,
-    model: b.model,
+    model: recordModel(rec),
     nMessages: items.length,
     nTools: Array.isArray(b.tools) ? b.tools.length : 0,
     nToolUse,

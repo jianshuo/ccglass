@@ -4,7 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ccglass — Claude Code wire inspector</title>
+    <meta name="color-scheme" content="dark light" />
     <link rel="stylesheet" href="/style.css" />
+    <script src="/theme.js"></script>
   </head>
   <body>
     <header>
@@ -12,11 +14,23 @@
       <select id="session"></select>
       <span id="live" class="badge">live</span>
       <span class="spacer"></span>
+      <select id="modelFilter" class="model-filter" title="Filter stats &amp; latency by model" hidden>
+        <option value="all">All models</option>
+      </select>
+      <div id="sessionStats" class="session-stats" hidden></div>
+      <select id="themeSelect" class="theme-select" title="Theme">
+        <option value="system">System</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
       <button id="errorsBtn">errors (0)</button>
       <button id="diffBtn" title="Pick two requests to compare">Diff: off</button>
     </header>
     <main>
-      <aside id="list"></aside>
+      <aside>
+        <div id="latencyTrend" class="latency-trend" hidden></div>
+        <div id="list"></div>
+      </aside>
       <section id="detail"><div class="empty">Select a request, or start chatting in Claude Code.</div></section>
     </main>
     <script src="/app.js"></script>

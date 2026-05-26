@@ -39,6 +39,17 @@ function makeRec(body) {
   };
 }
 
+test("pack -> unpack preserves startedAt", () => {
+  const root = tmpRoot();
+  const rec = {
+    ...makeRec({ model: "x", messages: [] }),
+    startedAt: 999,
+  };
+  const manifest = packRecord(root, rec);
+  assert.equal(manifest.startedAt, 999);
+  assert.deepEqual(unpackRecord(root, manifest), rec);
+});
+
 test("pack -> unpack is lossless: anthropic system array + tools + messages", () => {
   const root = tmpRoot();
   const body = {

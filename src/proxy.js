@@ -29,6 +29,8 @@ export function createProxy({ upstream, store }) {
           body,
         },
       });
+      const startedAt = Date.now();
+      rec.startedAt = startedAt;
 
       // Forward upstream. Strip accept-encoding so the captured response is
       // plain text (no gzip/br to decode) — Claude Code handles uncompressed fine.
@@ -47,17 +49,21 @@ export function createProxy({ upstream, store }) {
         (proxyRes) => {
           res.writeHead(proxyRes.statusCode, proxyRes.headers);
           const respChunks = [];
+          let firstByteAt;
           proxyRes.on("data", (c) => {
+            if (firstByteAt == null) firstByteAt = Date.now();
             respChunks.push(c);
             res.write(c);
           });
           proxyRes.on("end", () => {
             res.end();
+            const doneAt = Date.now();
             rec.response = {
               status: proxyRes.statusCode,
               headers: proxyRes.headers,
               raw: Buffer.concat(respChunks).toString("utf8"),
-              finishedAt: Date.now(),
+              firstByteAt: firstByteAt ?? doneAt,
+              finishedAt: doneAt,
             };
             store.update(rec);
           });
