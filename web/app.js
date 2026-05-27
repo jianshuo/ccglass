@@ -46,6 +46,7 @@ const state = {
   session: null, live: null, entries: [], sessionStats: null, sessionModels: [],
   modelFilter: "all",
   selected: null, tab: "overview", diff: false, picks: [], errorsOnly: false,
+  summary: false, summaryTab: "byModel", usage: null,
 };
 
 function entryModel(e) {
@@ -249,6 +250,10 @@ function renderList() {
 }
 
 function onPick(id) {
+  if (state.summary) {
+    state.summary = false;
+    updateSummaryBtn();
+  }
   if (state.diff) {
     state.picks = state.picks.includes(id) ? state.picks.filter((x) => x !== id) : [...state.picks, id].slice(-2);
     if (state.picks.length === 2) renderDiff();
@@ -583,6 +588,101 @@ function diffBlock(x, kind) {
   return `<div class="block diff-${kind}"><div class="h"><span>${esc(x.label)}</span><span>${tag}</span></div><pre>${esc((x.text || "").slice(0, 4000))}</pre></div>`;
 }
 
+// ---- summary: cross-session usage rollup ---------------------------------
+// Renders /api/usage (totals + per-model + per-session) as a takeover in
+// #detail, peer to the Diff view. Scoped to the current project's roots — see
+// readRoots() in src/paths.js — so it rolls up every capture under this cwd,
+// not other ccglass projects.
+
+const usd = (n) => "$" + Number(n || 0).toFixed(4);
+const pct = (r) => Math.round((r || 0) * 100) + "%";
+
+async function loadUsage() {
+  let next;
+  try {
+    next = await api("/api/usage");
+  } catch (err) {
+    next = { error: String(err?.message || err) };
+  }
+  // Race guard: user may have toggled Summary off mid-fetch. Drop the result
+  // so we don't clobber #detail with stale rollup data.
+  if (!state.summary) return;
+  state.usage = next;
+  renderSummary();
+}
+
+function renderSummary() {
+  const d = $("#detail");
+  d.innerHTML = "";
+  const u = state.usage;
+  if (!u) { d.innerHTML = '<div class="empty">Loading\u2026</div>'; return; }
+  if (u.error) { d.innerHTML = `<div class="empty">Failed to load usage: ${esc(u.error)}</div>`; return; }
+  if (!u.sessionCount) { d.innerHTML = '<div class="empty">No captured sessions yet for this project.</div>'; return; }
+
+  const t = u.totals;
+  const range = [u.range?.from, u.range?.to].filter(Boolean).map((s) => new Date(s).toLocaleString()).join(" \u2192 ") || "\u2014";
+  const unmeasured = u.unmeasured ? `${u.unmeasured} unmeasured` : undefined;
+  const cardsHtml = `
+    <div class="overview-section">Totals across ${fmt(u.sessionCount)} sessions</div>
+    <div class="cards">
+      ${card("sessions", fmt(u.sessionCount))}
+      ${card("requests", fmt(u.requestCount), unmeasured)}
+      ${card("input", fmt(t.input), "tokens")}
+      ${card("output", fmt(t.output), "tokens")}
+      ${card("cache read", fmt(t.cacheRead), pct(t.cacheHitRate) + " hit")}
+      ${card("cache write", fmt(t.cacheWrite), "tokens")}
+      ${card("cost", usd(t.usd))}
+    </div>
+    <p style="color:var(--muted)">range: ${esc(range)}</p>`;
+
+  const subTabs = [["byModel", "by model"], ["bySession", "by session"]];
+  const tabsHtml = `<div class="tabs">` + subTabs.map(([id, label]) =>
+    `<div class="tab${id === state.summaryTab ? " on" : ""}" data-stab="${id}">${label}</div>`
+  ).join("") + `</div>`;
+
+  const body = state.summaryTab === "bySession"
+    ? bySessionHtml(u.bySession)
+    : byModelHtml(u.byModel);
+
+  d.innerHTML = `${tabsHtml}<div class="pane">${cardsHtml}<div class="summary-body">${body}</div></div>`;
+  d.querySelectorAll(".tab[data-stab]").forEach((node) => {
+    node.onclick = () => { state.summaryTab = node.dataset.stab; renderSummary(); };
+  });
+}
+
+function byModelHtml(rows) {
+  if (!rows?.length) return `<p style="color:var(--muted)">no measured requests</p>`;
+  const head = `<tr><th>model</th><th class="n">reqs</th><th class="n">input</th><th class="n">output</th><th class="n">cache read</th><th class="n">cache hit</th><th class="n">cost</th></tr>`;
+  const body = rows.map((r) =>
+    `<tr><td>${esc(r.model)}</td><td class="n">${fmt(r.requests)}</td><td class="n">${fmt(r.input)}</td><td class="n">${fmt(r.output)}</td><td class="n">${fmt(r.cacheRead)}</td><td class="n">${pct(r.cacheHitRate)}</td><td class="n">${usd(r.usd)}</td></tr>`
+  ).join("");
+  return `<table class="usage-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+function bySessionHtml(rows) {
+  if (!rows?.length) return `<p style="color:var(--muted)">no sessions</p>`;
+  const head = `<tr><th>session</th><th class="n">reqs</th><th class="n">input</th><th class="n">output</th><th class="n">cache hit</th><th class="n">cost</th></tr>`;
+  const body = rows.map((r) =>
+    `<tr><td>${esc(r.session)}</td><td class="n">${fmt(r.requests)}</td><td class="n">${fmt(r.input)}</td><td class="n">${fmt(r.output)}</td><td class="n">${pct(r.cacheHitRate)}</td><td class="n">${usd(r.usd)}</td></tr>`
+  ).join("");
+  return `<table class="usage-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+function updateSummaryBtn() {
+  const btn = $("#summaryBtn");
+  btn.textContent = "Summary: " + (state.summary ? "on" : "off");
+  btn.classList.toggle("on", state.summary);
+}
+
+// SSE-driven entries arrive while Summary is open; reload the rollup
+// (debounced) so totals don't go stale during a live session.
+let usageReloadTimer = null;
+function scheduleUsageReload() {
+  if (!state.summary) return;
+  clearTimeout(usageReloadTimer);
+  usageReloadTimer = setTimeout(() => { if (state.summary) loadUsage(); }, 500);
+}
+
 // ---- live + wiring -------------------------------------------------------
 
 function connectStream() {
@@ -598,8 +698,9 @@ function connectStream() {
       renderLatencyTrend();
       renderList();
       clearDetailIfHidden();
-      if (s.id === state.selected) loadDetail(s.id);
+      if (!state.summary && s.id === state.selected) loadDetail(s.id);
       if (!s.pending) loadSessionStatsQuiet();
+      if (state.summary && !s.pending) scheduleUsageReload();
     };
   } catch {}
 }
@@ -631,8 +732,41 @@ $("#diffBtn").onclick = (e) => {
   state.picks = [];
   e.target.textContent = "Diff: " + (state.diff ? "pick 2" : "off");
   e.target.classList.toggle("on", state.diff);
+  // Diff and Summary both swap #detail \u2014 only one can be active.
+  if (state.diff && state.summary) {
+    state.summary = false;
+    updateSummaryBtn();
+    // Summary HTML is still in #detail; restore the per-request view (or
+    // empty state) so the user isn't left staring at a stale rollup.
+    if (state.selected) loadDetail(state.selected);
+    else $("#detail").innerHTML = '<div class="empty">Select a request, or start chatting in Claude Code.</div>';
+  }
   renderList();
   if (!state.diff && state.selected) loadDetail(state.selected);
+};
+$("#summaryBtn").onclick = () => {
+  state.summary = !state.summary;
+  if (state.summary) {
+    // Mirror image of the Diff toggle: turning Summary on cancels Diff.
+    if (state.diff) {
+      state.diff = false;
+      state.picks = [];
+      const db = $("#diffBtn");
+      db.textContent = "Diff: off";
+      db.classList.remove("on");
+      renderList();
+    }
+    updateSummaryBtn();
+    // Drop the prior payload so renderSummary() falls through to "Loading…"
+    // instead of flashing yesterday's totals before the fetch lands.
+    state.usage = null;
+    renderSummary();
+    loadUsage();
+  } else {
+    updateSummaryBtn();
+    if (state.selected) loadDetail(state.selected);
+    else $("#detail").innerHTML = '<div class="empty">Select a request, or start chatting in Claude Code.</div>';
+  }
 };
 
 const themeCtl = window.ccglassTheme?.initTheme?.();

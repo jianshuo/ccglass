@@ -252,3 +252,22 @@ button.dl.copy-curl:hover { text-decoration: underline; }
 [data-theme="light"] .tag.skill { background: #8b5cf6; color: #fff; }
 .tag.latest { background: var(--accent); color: var(--on-accent); }
 .tag.id { background: var(--panel2); color: var(--muted); }
+
+/* ---- summary: cross-session usage rollup ---- */
+.usage-table {
+  width: 100%; border-collapse: collapse; margin-top: 12px;
+  font-family: var(--mono); font-size: 12.5px;
+}
+.usage-table th, .usage-table td {
+  padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left;
+}
+.usage-table thead th {
+  color: var(--muted); font-weight: 600; text-transform: uppercase;
+  font-size: 11px; letter-spacing: .4px;
+  background: var(--panel2); position: sticky; top: 0;
+}
+.usage-table td.n, .usage-table th.n {
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+.usage-table tbody tr:hover { background: var(--panel2); }
+.summary-body { margin-top: 4px; }
