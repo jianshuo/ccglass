@@ -42,11 +42,17 @@ function groupRetries(entries, windowMs = 60_000) {
   return out;
 }
 
+const LIVE = "__live__"; // sentinel value for state.selected meaning "live stream view"
+
 const state = {
   session: null, live: null, entries: [], sessionStats: null, sessionModels: [],
   modelFilter: "all",
   selected: null, tab: "overview", diff: false, picks: [], errorsOnly: false,
   summary: false, summaryTab: "byModel", usage: null,
+  // Live-stream state — populated only while #detail shows the live timeline
+  liveSeen: new Map(),     // stepKey -> true (dedup across entries)
+  liveToolRows: new Map(), // callId -> DOM element of the tool_use row
+  livePinned: true,        // auto-scroll to bottom unless user scrolled up
 };
 
 function entryModel(e) {
@@ -81,6 +87,7 @@ function visibleEntries() {
 
 function clearDetailIfHidden() {
   if (!state.selected) return;
+  if (state.selected === LIVE) return; // Live view always remains valid
   if (visibleEntries().some((e) => e.id === state.selected)) return;
   state.selected = null;
   state.picks = [];
@@ -112,6 +119,9 @@ async function loadSessions() {
   if (state.session) sel.value = state.session;
   $("#live").classList.toggle("off", !live);
   await loadList();
+  // Default the dashboard to the Live stream view on first load — most users
+  // want to watch traffic, not pick from a list of HTTP rounds.
+  if (!state.selected) onPick(LIVE);
 }
 
 async function loadList() {
@@ -221,6 +231,16 @@ function renderList() {
   updateErrorsBtn();
   const list = $("#list");
   list.innerHTML = "";
+  // Sticky "Live" entry — always at top, opens the streaming timeline.
+  const liveRow = el("div", { className: "live-entry" + (state.selected === LIVE ? " sel" : "") + (state.live ? "" : " off") });
+  liveRow.append(
+    el("div", { className: "top" },
+      el("span", { className: "dot" }),
+      el("span", { textContent: state.live ? "Live stream" : "Stream (offline)" })),
+    el("div", { className: "sub", textContent: state.live ? "All turns, append as they happen" : "Replay saved turns top-to-bottom" })
+  );
+  liveRow.onclick = () => onPick(LIVE);
+  list.append(liveRow);
   const visible = visibleEntries();
   const grouped = groupRetries(visible);
   for (const e of grouped) {
@@ -254,7 +274,7 @@ function onPick(id) {
     state.summary = false;
     updateSummaryBtn();
   }
-  if (state.diff) {
+  if (state.diff && id !== LIVE) {
     state.picks = state.picks.includes(id) ? state.picks.filter((x) => x !== id) : [...state.picks, id].slice(-2);
     if (state.picks.length === 2) renderDiff();
     renderList();
@@ -262,7 +282,8 @@ function onPick(id) {
   }
   state.selected = id;
   renderList();
-  loadDetail(id);
+  if (id === LIVE) renderLive();
+  else loadDetail(id);
 }
 
 // ---- detail --------------------------------------------------------------
@@ -683,12 +704,506 @@ function scheduleUsageReload() {
   usageReloadTimer = setTimeout(() => { if (state.summary) loadUsage(); }, 500);
 }
 
+// ---- live stream view ----------------------------------------------------
+// Single-column timeline rendered into #detail. Walks every entry in the
+// current session in order, expands each via flowSteps(), dedups across
+// entries by callId/text-prefix, and merges each tool_use ↔ its tool_result
+// into one row (body shows the OUTPUT; original input tucks into a nested
+// "show input" disclosure). SSE appends new steps to the live view without
+// re-rendering everything.
+
+function smartSummary(step) {
+  if (step.kind === "tool_result") {
+    let inner = String(step.text || "");
+    try {
+      const o = JSON.parse(inner);
+      if (Array.isArray(o)) inner = o.map((x) => typeof x === "string" ? x : (x?.text ?? JSON.stringify(x))).join("\n");
+      else if (typeof o === "object" && o) inner = o.text ?? JSON.stringify(o);
+    } catch { /* not JSON */ }
+    return oneLine(inner, 140);
+  }
+  if (step.kind === "stop") return step.text || "";
+  if (step.kind === "tool_use" || step.kind === "skill") {
+    let input = {};
+    try { input = JSON.parse(step.text); } catch { /* not JSON */ }
+    const name = step.name || "";
+    if (name === "Bash") return oneLine(input.command, 140);
+    if (name === "Read") {
+      const loc = input.file_path || "";
+      const rng = input.offset != null ? `:${input.offset}${input.limit ? `-${input.offset + input.limit}` : ""}` : "";
+      return loc + rng;
+    }
+    if (name === "Edit" || name === "Write" || name === "NotebookEdit") return oneLine(input.file_path, 140);
+    if (name === "Grep") return [input.pattern && `"${input.pattern}"`, input.path].filter(Boolean).join(" in ");
+    if (name === "Glob") return input.pattern || "";
+    if (name === "WebFetch" || name === "WebSearch") return oneLine(input.url || input.query, 140);
+    if (name === "Skill") return input.skill || input.name || "";
+    if (name === "TaskCreate" || name === "TaskUpdate") return oneLine(input.subject || input.description, 140);
+    if (name === "AskUserQuestion") return oneLine(input.questions?.[0]?.question, 140);
+    if (/sql|query|exec/i.test(name)) return oneLine(input.sql || input.query || input.statement, 140);
+    const firstScalar = Object.values(input).find((v) => typeof v === "string" || typeof v === "number");
+    if (firstScalar != null) return oneLine(firstScalar, 140);
+    return oneLine(step.text, 140);
+  }
+  return oneLine(step.text, 200);
+}
+
+function liveStepKey(s) {
+  if (s.callId) return s.kind + "|" + s.callId;
+  return s.kind + "|" + (s.text || "").slice(0, 200);
+}
+
+// Tool name → category (file/shell/search/web/task/agent/plan/q&a/cron/notify/mcp)
+function toolCategory(name) {
+  if (!name) return null;
+  if (name.startsWith("mcp__")) return "mcp";
+  if (/^(Read|Edit|Write|MultiEdit|NotebookEdit)$/.test(name)) return "file";
+  if (/^(Bash|BashOutput|KillShell)$/.test(name)) return "shell";
+  if (/^(Grep|Glob|LS)$/.test(name)) return "search";
+  if (/^(WebFetch|WebSearch)$/.test(name)) return "web";
+  if (/^Task(Create|Update|Get|List|Output|Stop)$/.test(name)) return "task";
+  if (/^Agent$/.test(name)) return "agent";
+  if (/^Skill$/.test(name)) return "skill";
+  if (/^(EnterPlanMode|ExitPlanMode)$/.test(name)) return "plan";
+  if (/^AskUserQuestion$/.test(name)) return "ask";
+  if (/^(ScheduleWakeup|CronCreate|CronDelete|CronList)$/.test(name)) return "cron";
+  if (/^PushNotification$/.test(name)) return "notify";
+  if (/^TodoWrite$/.test(name)) return "task";
+  return null;
+}
+
+// Recognize common envelope patterns in flow steps and return pattern tags.
+// These are passive labels — they don't filter, just classify, so you can scan
+// the stream and see "ah, this user row is a system-reminder, not a real input".
+const PAT_DETECTORS = [
+  // ---- user-side text envelopes ----------------------------------------
+  { kinds: ["user"], match: (t) => /^<command-name>|^<command-message>|^<command-args>/m.test(t), tag: "slash" },
+  { kinds: ["user"], match: (t) => /<local-command-stdout>/.test(t), tag: "cmd-out" },
+  { kinds: ["user"], match: (t) => /<user-prompt-submit-hook>|<session-start-hook>|<post-tool-use-hook>|<stop-hook>/.test(t), tag: "hook" },
+  { kinds: ["user"], match: (t) => /<system-reminder>/.test(t), tag: "reminder" },
+  { kinds: ["user"], match: (t) => /Caveat: The messages below were generated/i.test(t), tag: "caveat" },
+  { kinds: ["user"], match: (t) => /\[Image #\d+\]|image_path=|<channel source="(imessage|telegram)"/.test(t), tag: "image" },
+  { kinds: ["user"], match: (t) => /Contents of \/.+CLAUDE\.md|Codebase and user instructions are shown below|# auto memory|# currentDate|# userEmail/.test(t), tag: "memory" },
+  { kinds: ["user"], match: (t) => /Previous Conversation Compacted|This session is being continued|<auto-compact-summary>|stepped away and is coming back|Recap in under \d+ words|recap.*1-2 plain sentences/i.test(t), tag: "recap" },
+  // Skill invocation/return — appears as user-role text in Claude Code
+  { kinds: ["user"], match: (t) => /^Launching skill:|^Base directory for this skill:/m.test(t), tag: "skill-load" },
+  // ---- assistant-side text -----------------------------------------------
+  { kinds: ["assistant"], match: (t, s) => s.text && s.text.length === 0, tag: "empty" },
+];
+
+function detectPatterns(step) {
+  const out = [];
+  const t = String(step.text || "");
+  for (const d of PAT_DETECTORS) {
+    if (!d.kinds.includes(step.kind)) continue;
+    try { if (d.match(t, step)) out.push(d.tag); } catch { /* skip */ }
+  }
+  if (step.kind === "tool_use" || step.kind === "skill") {
+    const cat = toolCategory(step.name);
+    if (cat) out.push(cat);
+  }
+  return out;
+}
+
+// Rich tag metadata. `headline` is shown as the popover title; `desc` is a 2-4
+// sentence explanation rendered in the popover body. `doc` adds an "Open docs"
+// footer link. The popover replaces the native title tooltip entirely.
+const TAG_INFO = {
+  // ---- pattern tags: user-side envelopes -------------------------------
+  reminder: {
+    headline: "system-reminder",
+    desc: "A <system-reminder> block — the CLI injected guidance into the user's message slot to nudge the model (e.g. 'consider using the task tools', 'be terse', 'auto-mode active'). The user didn't type this; it's harness instrumentation. Models are trained to take these seriously, so they shape behavior even though they're invisible in normal chat UIs.",
+  },
+  hook: {
+    headline: "hook output",
+    desc: "Output from a Claude Code hook — user-configured shell commands that fire on lifecycle events (session start, user prompt submit, after each tool use, on stop). Whatever the hook prints to stdout gets injected as a synthetic user-role message. The model treats it as user input, so a misbehaving hook can effectively steer the agent.",
+    doc: "https://docs.claude.com/en/docs/claude-code/hooks",
+  },
+  slash: {
+    headline: "slash command",
+    desc: "The user typed a slash command like /skill-name, /clear, or /help. The CLI resolves it into a structured envelope (<command-name>, <command-message>, <command-args>) before sending to the model — that envelope is what you see in the body.",
+    doc: "https://docs.claude.com/en/docs/claude-code/slash-commands",
+  },
+  "cmd-out": {
+    headline: "local command output",
+    desc: "stdout of a local shell command the user ran inline via the ! prefix (e.g. `!ls`). The CLI wraps it in <local-command-stdout> tags and feeds it back to the model as user-role context.",
+  },
+  caveat: {
+    headline: "caveat banner",
+    desc: "The CLI prepends 'Caveat: The messages below were generated by the user while running local commands' when content was produced by side-channel tools (file edits via /edit, etc), not the assistant. Marks a provenance boundary.",
+  },
+  memory: {
+    headline: "memory context",
+    desc: "The CLI's auto-loaded context: CLAUDE.md files (project + user-level), environment info (cwd, OS, git branch), current date, user email. This bootstraps every session and usually lives in the first user message — explains why turn 1 is huge.",
+    doc: "https://docs.claude.com/en/docs/claude-code/memory",
+  },
+  recap: {
+    headline: "recap",
+    desc: "A synthetic message asking the model to compress or restate prior state. Two common triggers: (1) auto-compaction — the CLI hit the context window and condensed earlier turns into a summary, so the model continues from a digest rather than full history; (2) the user stepped away and came back, and the harness injects a 'recap where we are' prompt to re-orient the model.",
+  },
+  image: {
+    headline: "image attached",
+    desc: "The user attached an image (screenshot, IM channel photo, drag-and-drop). The body shows the surrounding text; the image itself was sent as a separate content block alongside.",
+  },
+  "skill-load": {
+    headline: "skill loaded",
+    desc: "A Skill's full instructions were dropped into the conversation. Once loaded, the skill's content acts as additional system-level guidance for the rest of the turn (sometimes longer). Usually preceded by a slash-command invocation.",
+    doc: "https://docs.claude.com/en/docs/claude-code/skills",
+  },
+  empty: {
+    headline: "empty block",
+    desc: "An empty text content block — no characters. Harmless but odd; usually a model output quirk.",
+  },
+  // ---- pattern tags: tool categories ------------------------------------
+  file: {
+    headline: "file operation",
+    desc: "Read / Edit / Write / MultiEdit / NotebookEdit — the model is touching files on disk. The body shows the file content after a successful call.",
+  },
+  shell: {
+    headline: "shell command",
+    desc: "Bash — the model executed a shell command locally. The title shows the command; the body shows stdout (and stderr) plus exit code.",
+  },
+  search: {
+    headline: "codebase search",
+    desc: "Grep (regex over files) or Glob (filename patterns). The model is exploring the codebase. Output is typically a short list of matches with line numbers.",
+  },
+  web: {
+    headline: "web access",
+    desc: "WebFetch (load a URL and summarize) or WebSearch (query a search engine). The model went off-machine to get context.",
+  },
+  task: {
+    headline: "task tracking",
+    desc: "TaskCreate / TaskUpdate / TaskList / TodoWrite — the model is managing its own to-do list for multi-step work. Visible in the CLI's spinner.",
+  },
+  agent: {
+    headline: "sub-agent",
+    desc: "Spawned a specialized sub-agent via the Agent tool. The sub-agent runs in an isolated context and returns a single summary message. Useful for parallel exploration without polluting the main context.",
+    doc: "https://docs.claude.com/en/docs/claude-code/sub-agents",
+  },
+  skill: {
+    headline: "skill",
+    desc: "Invoked a Claude skill via the Skill tool. The skill's instructions get loaded and the model follows that workflow.",
+    doc: "https://docs.claude.com/en/docs/claude-code/skills",
+  },
+  plan: {
+    headline: "plan mode",
+    desc: "EnterPlanMode / ExitPlanMode — the model is in plan-first mode, where it must present an implementation plan and get user approval before writing code. Common for non-trivial features.",
+  },
+  ask: {
+    headline: "user question",
+    desc: "AskUserQuestion — the model paused execution to ask the user a multiple-choice question. Conversation can't continue until the user answers.",
+  },
+  cron: {
+    headline: "scheduled",
+    desc: "CronCreate / CronDelete / CronList / ScheduleWakeup — the model scheduled a future prompt. The harness fires the prompt back at the scheduled time, resuming the loop.",
+  },
+  notify: {
+    headline: "notification",
+    desc: "PushNotification — the model sent a desktop and/or phone notification to grab the user's attention. Usually for long-running tasks or when blocked.",
+  },
+  mcp: {
+    headline: "MCP tool",
+    desc: "Model Context Protocol — the model called a tool exposed by an external MCP server (e.g. mcp__github__*, mcp__filesystem__*). MCP is how Claude Code plugs into databases, APIs, IDEs.",
+    doc: "https://docs.claude.com/en/docs/claude-code/mcp",
+  },
+  // ---- operational tags -------------------------------------------------
+  ok: {
+    headline: "ok",
+    desc: "The tool call returned successfully. The body shows the exact output text the model received — that's what the model will reason about next.",
+  },
+  err: {
+    headline: "error",
+    desc: "The tool reported an error (non-zero exit code, exception, validation failure, refusal). The body shows the error text the model saw — it may retry with a different approach or surface the failure to the user.",
+  },
+  pending: {
+    headline: "pending",
+    desc: "The model asked for this tool call but its tool_result hasn't arrived yet. Either the tool is still running locally (Bash command, network fetch), or this was the very last action in the captured trace and the CLI hasn't sent the next request.",
+  },
+  latest: {
+    headline: "this turn",
+    desc: "This step belongs to the assistant's response of the most recent HTTP round-trip. Earlier rows are reconstructed from prior conversation history; this one came in just now over the wire.",
+  },
+  id: {
+    headline: "call id",
+    desc: "Tool-call ID assigned by the model when it requested the tool. ccglass uses it to pair a tool_use row with its matching tool_result — they share the same colored left stripe so you can read across.",
+  },
+};
+
+// Render a tag chip. `name` is the lookup key in TAG_INFO; `label` is the
+// visible text (defaults to name). Popover content comes from TAG_INFO via
+// data-tag-key — no native title attribute, so the rich popover is the only
+// hover affordance.
+function tagChip(name, extraClass = "", label = name) {
+  const cls = "tag " + (extraClass ? extraClass + " " : "");
+  return `<span class="${cls}" data-tag-key="${esc(name)}">${esc(label)}</span>`;
+}
+
+// ---- tag popover ---------------------------------------------------------
+// A single shared popover element shown on hover over any [data-tag-key].
+// Body-level positioning means it works whether the tag is in the live pane,
+// the classic detail, or anywhere else. Hovering the popover itself keeps it
+// open so users can click the docs link.
+
+(function setupTagPopover() {
+  const el = document.createElement("div");
+  el.className = "tag-popover";
+  el.hidden = true;
+  document.body.appendChild(el);
+
+  let showT = null, hideT = null, current = null;
+
+  function scheduleHide() {
+    clearTimeout(hideT);
+    hideT = setTimeout(() => { el.hidden = true; current = null; }, 150);
+  }
+
+  function show(target) {
+    clearTimeout(hideT);
+    if (current === target) return;
+    clearTimeout(showT);
+    showT = setTimeout(() => {
+      const key = target.dataset.tagKey;
+      const info = TAG_INFO[key];
+      if (!info) return;
+      el.innerHTML =
+        `<div class="pop-head">${esc(info.headline || key)}</div>` +
+        `<div class="pop-body">${esc(info.desc || "")}</div>` +
+        (info.doc ? `<div class="pop-doc"><a href="${esc(info.doc)}" target="_blank" rel="noopener">Open docs ↗</a></div>` : "");
+      el.hidden = false;
+      position(target);
+      current = target;
+    }, 200);
+  }
+
+  function position(target) {
+    const r = target.getBoundingClientRect();
+    // Reset to measure natural size
+    el.style.left = "-9999px";
+    el.style.top = "0px";
+    const pr = el.getBoundingClientRect();
+    let left = r.left;
+    let top = r.bottom + 6;
+    if (left + pr.width > window.innerWidth - 8) left = window.innerWidth - pr.width - 8;
+    if (left < 8) left = 8;
+    if (top + pr.height > window.innerHeight - 8) top = Math.max(8, r.top - pr.height - 6);
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+  }
+
+  el.addEventListener("mouseenter", () => clearTimeout(hideT));
+  el.addEventListener("mouseleave", scheduleHide);
+
+  // Event delegation — any element with data-tag-key triggers
+  document.addEventListener("mouseover", (e) => {
+    const t = e.target.closest("[data-tag-key]");
+    if (!t) return;
+    show(t);
+  });
+  document.addEventListener("mouseout", (e) => {
+    const t = e.target.closest("[data-tag-key]");
+    if (!t) return;
+    scheduleHide();
+  });
+  // Escape closes immediately
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { el.hidden = true; current = null; } });
+})();
+
+function liveStepEl(step, { latestEntry = false } = {}) {
+  const paired = step.kind === "tool_use" || step.kind === "skill" || step.kind === "tool_result";
+  const hasBody = step.kind !== "stop" && (step.text != null && String(step.text).length > 0);
+
+  const root = document.createElement(hasBody ? "details" : "div");
+  root.className = "flowrow " + step.kind + (paired ? " paired" : "");
+  if (hasBody) root.open = step.kind !== "thinking"; // thinking starts collapsed
+  if (step.callId) {
+    root.style.setProperty("--hue", idHue(step.callId));
+    root.dataset.callId = step.callId;
+  }
+
+  const tags = [];
+  // Pattern tags first (left-most) — classify what kind of envelope this row is
+  for (const p of detectPatterns(step)) tags.push(tagChip(p, `pat pat-${p}`));
+  if (step.kind === "skill") tags.push(tagChip("skill", "skill"));
+  if (step.kind === "tool_result") tags.push(tagChip(step.isError ? "err" : "ok", step.isError ? "err" : "ok"));
+  if (step.callId) {
+    const short = esc(String(step.callId).slice(-6));
+    tags.push(`<span class="tag id" data-tag-key="id">${short}</span>`);
+  }
+  if (latestEntry && step.latest) tags.push(tagChip("latest", "latest", "this turn"));
+  if (step.kind === "tool_use" || step.kind === "skill") {
+    tags.push(`<span class="tag pending" data-tag-key="pending">pending…</span>`);
+  }
+
+  const titleHtml =
+    step.kind === "tool_use" ? `<b>${esc(step.name || "tool")}</b>` :
+    step.kind === "skill" ? `<b>/${esc(step.name || "skill")}</b>` :
+    step.kind === "tool_result" ? `<span style="color:var(--muted)">result</span>` :
+    step.kind === "stop" ? `<span style="color:var(--muted)">stop_reason</span>` :
+    step.kind === "thinking" ? `<span style="color:var(--muted)">thinking</span>` :
+    step.kind === "user" ? `<b>user</b>` :
+    step.kind === "assistant" ? `<b>assistant</b>` : `<span style="color:var(--muted)">${esc(step.kind)}</span>`;
+
+  const sumText = smartSummary(step);
+  const summaryHtml = (step.kind !== "stop" && sumText) ? `<span class="summary">${esc(sumText)}</span>` : "";
+  const inlineHtml = step.kind === "stop" ? `<span class="inline">${esc(step.text || "")}</span>` : "";
+  const toggleHtml = hasBody ? `<span class="toggle" aria-hidden="true"></span>` : "";
+
+  const headHtml =
+    `<span class="dot">${FLOW_ICON[step.kind] || "•"}</span>` +
+    `<span class="lead">${titleHtml}${summaryHtml}${inlineHtml}${tags.join("")}${toggleHtml}</span>`;
+
+  if (hasBody) {
+    root.innerHTML = `<summary>${headHtml}</summary><pre class="body input-body">${esc(step.text || "")}</pre>`;
+    if (step.kind === "tool_use" || step.kind === "skill") root.dataset.input = step.text || "";
+  } else {
+    root.innerHTML = headHtml;
+  }
+  return root;
+}
+
+function liveMergeResult(toolRow, resultStep) {
+  toolRow.classList.add("has-output"); // CSS keeps the title-line summary visible (command/path) since it's now distinct from the body (output)
+  const lead = toolRow.querySelector(".lead");
+  if (lead) {
+    const pending = lead.querySelector(".tag.pending");
+    if (pending) pending.remove();
+    const okErrKey = resultStep.isError ? "err" : "ok";
+    const okErr = document.createElement("span");
+    okErr.className = "tag " + okErrKey;
+    okErr.textContent = okErrKey;
+    okErr.dataset.tagKey = okErrKey;
+    const tog = lead.querySelector(".toggle");
+    if (tog) lead.insertBefore(okErr, tog); else lead.appendChild(okErr);
+  }
+  const oldBody = toolRow.querySelector(":scope > .body");
+  if (oldBody) oldBody.remove();
+  const output = document.createElement("pre");
+  output.className = "body output-body";
+  output.textContent = resultStep.text || "";
+  toolRow.appendChild(output);
+  const inputText = toolRow.dataset.input || "";
+  if (inputText && inputText.trim() !== "{}" && inputText.length > 4) {
+    const inputFold = document.createElement("details");
+    inputFold.className = "input-fold";
+    inputFold.innerHTML = `<summary>show input</summary><pre>${esc(inputText)}</pre>`;
+    toolRow.appendChild(inputFold);
+  }
+}
+
+function liveTurnSepEl(meta) {
+  const div = document.createElement("div");
+  div.className = "turn-sep";
+  const errClass = meta.status && meta.status >= 400 ? " err" : "";
+  const clock = meta.ts ? new Date(meta.ts).toTimeString().slice(0, 8) : "";
+  div.innerHTML =
+    `<span class="meta">` +
+      `<b>turn ${meta.seq ?? ""}</b>` +
+      (meta.model ? `<span>${esc(meta.model)}</span>` : "") +
+      (meta.latencyMs != null ? `<span>${fmtMs(meta.latencyMs)}</span>` : "") +
+      (meta.status != null ? `<span class="${errClass.trim()}">${meta.status}</span>` : "") +
+      (clock ? `<span>${clock}</span>` : "") +
+    `</span>`;
+  return div;
+}
+
+function liveBodyEl() {
+  return $("#detail .live-pane .live-body");
+}
+
+function liveAppendEntry(rec, { flash = false } = {}) {
+  const body = liveBodyEl();
+  if (!body) return;
+  const steps = flowSteps(rec);
+  let appendedAny = false;
+  for (const s of steps) {
+    // tool_result: merge into existing tool_use row instead of new row
+    if (s.kind === "tool_result" && s.callId && state.liveToolRows.has(s.callId)) {
+      const mergeKey = "merged|" + s.callId;
+      if (state.liveSeen.has(mergeKey)) continue;
+      state.liveSeen.set(mergeKey, true);
+      liveMergeResult(state.liveToolRows.get(s.callId), s);
+      continue;
+    }
+    const k = liveStepKey(s);
+    if (state.liveSeen.has(k)) continue;
+    state.liveSeen.set(k, true);
+    if (!appendedAny) {
+      body.appendChild(liveTurnSepEl({
+        seq: rec.seq, model: rec.parsed?.view?.model || rec.model,
+        latencyMs: rec.latencyMs, status: rec.response?.status, ts: rec.ts ?? rec.startedAt,
+      }));
+      appendedAny = true;
+    }
+    const row = liveStepEl(s, { latestEntry: true });
+    if (flash) row.classList.add("flash");
+    body.appendChild(row);
+    if ((s.kind === "tool_use" || s.kind === "skill") && s.callId) {
+      state.liveToolRows.set(s.callId, row);
+    }
+  }
+  if (state.livePinned) {
+    const pane = $("#detail .live-pane");
+    if (pane) {
+      // Mark this as programmatic so the scroll handler doesn't mis-interpret
+      // the follow-up scroll event as the user scrolling away from bottom.
+      state.programmaticScrollAt = Date.now();
+      pane.scrollTop = pane.scrollHeight;
+    }
+  }
+}
+
+async function renderLive() {
+  state.liveSeen.clear();
+  state.liveToolRows.clear();
+  state.livePinned = true;
+
+  const d = $("#detail");
+  d.innerHTML =
+    `<div class="live-pane">` +
+      `<div class="live-toolbar">` +
+        `<label><input type="checkbox" id="liveAutoScroll" checked /> auto-scroll</label>` +
+        `<button id="liveExpandAll">expand all</button>` +
+        `<button id="liveCollapseAll">collapse all</button>` +
+        `<span class="spacer"></span>` +
+        `<span class="muted">turns append as they arrive · click a request on the left for the classic per-call view</span>` +
+      `</div>` +
+      `<div class="live-body"></div>` +
+    `</div>`;
+
+  const pane = $("#detail .live-pane");
+  pane.addEventListener("scroll", () => {
+    // Ignore scroll events fired by our own scrollTop assignment during
+    // rapid appends — only react to genuine user scrolls.
+    if (Date.now() - (state.programmaticScrollAt || 0) < 200) return;
+    const nearBottom = pane.scrollHeight - pane.clientHeight - pane.scrollTop < 40;
+    state.livePinned = nearBottom;
+    const cb = $("#liveAutoScroll");
+    if (cb) cb.checked = nearBottom;
+  });
+  $("#liveAutoScroll").onchange = (e) => { state.livePinned = e.target.checked; };
+  $("#liveExpandAll").onclick = () => { for (const r of pane.querySelectorAll("details.flowrow")) r.open = true; };
+  $("#liveCollapseAll").onclick = () => { for (const r of pane.querySelectorAll("details.flowrow")) r.open = false; };
+
+  // Walk every entry in order, fetch its full record, append flow steps.
+  const entries = entriesForModelFilter(state.entries).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  for (const e of entries) {
+    try {
+      const rec = await api("/api/request/" + encodeURIComponent(e.id));
+      if (rec && !rec.error) liveAppendEntry(rec);
+    } catch { /* skip on error */ }
+  }
+  if (state.livePinned) {
+    state.programmaticScrollAt = Date.now();
+    pane.scrollTop = pane.scrollHeight;
+  }
+}
+
 // ---- live + wiring -------------------------------------------------------
 
 function connectStream() {
   try {
     const es = new EventSource("/api/stream");
-    es.onmessage = (ev) => {
+    es.onmessage = async (ev) => {
       const s = JSON.parse(ev.data);
       if (s.session !== (state.session || state.live)) return;
       const i = state.entries.findIndex((e) => e.id === s.id);
@@ -698,7 +1213,14 @@ function connectStream() {
       renderLatencyTrend();
       renderList();
       clearDetailIfHidden();
-      if (!state.summary && s.id === state.selected) loadDetail(s.id);
+      if (state.selected === LIVE) {
+        try {
+          const rec = await api("/api/request/" + encodeURIComponent(s.id));
+          if (rec && !rec.error) liveAppendEntry(rec, { flash: true });
+        } catch { /* ignore */ }
+      } else if (!state.summary && s.id === state.selected) {
+        loadDetail(s.id);
+      }
       if (!s.pending) loadSessionStatsQuiet();
       if (state.summary && !s.pending) scheduleUsageReload();
     };
@@ -713,11 +1235,12 @@ async function loadSessionStatsQuiet() {
   renderSessionStats();
 }
 
-$("#session").onchange = (e) => {
+$("#session").onchange = async (e) => {
   state.session = e.target.value;
   state.picks = [];
   state.modelFilter = "all";
-  loadList();
+  await loadList();
+  if (state.selected === LIVE) renderLive();
 };
 $("#modelFilter").onchange = (e) => {
   state.modelFilter = e.target.value;
@@ -725,6 +1248,7 @@ $("#modelFilter").onchange = (e) => {
   renderLatencyTrend();
   renderList();
   clearDetailIfHidden();
+  if (state.selected === LIVE) renderLive();
 };
 $("#errorsBtn").onclick = () => { state.errorsOnly = !state.errorsOnly; renderList(); };
 $("#diffBtn").onclick = (e) => {
@@ -738,11 +1262,15 @@ $("#diffBtn").onclick = (e) => {
     updateSummaryBtn();
     // Summary HTML is still in #detail; restore the per-request view (or
     // empty state) so the user isn't left staring at a stale rollup.
-    if (state.selected) loadDetail(state.selected);
+    if (state.selected === LIVE) renderLive();
+    else if (state.selected) loadDetail(state.selected);
     else $("#detail").innerHTML = '<div class="empty">Select a request, or start chatting in Claude Code.</div>';
   }
   renderList();
-  if (!state.diff && state.selected) loadDetail(state.selected);
+  if (!state.diff && state.selected) {
+    if (state.selected === LIVE) renderLive();
+    else loadDetail(state.selected);
+  }
 };
 $("#summaryBtn").onclick = () => {
   state.summary = !state.summary;
@@ -764,7 +1292,8 @@ $("#summaryBtn").onclick = () => {
     loadUsage();
   } else {
     updateSummaryBtn();
-    if (state.selected) loadDetail(state.selected);
+    if (state.selected === LIVE) renderLive();
+    else if (state.selected) loadDetail(state.selected);
     else $("#detail").innerHTML = '<div class="empty">Select a request, or start chatting in Claude Code.</div>';
   }
 };

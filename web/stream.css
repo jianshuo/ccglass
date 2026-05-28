@@ -1,0 +1,316 @@
+/* Live-stream view — single column timeline rendered into the existing right
+ * pane (#detail). Scoped under .live-pane so it never collides with the
+ * classic list/detail styles in style.css. The classic dashboard also uses a
+ * .row class for the left list, so flow-step rows use .flowrow here. */
+
+.live-pane {
+  height: 100%;
+  overflow-y: auto;
+  padding: 12px 18px 80px;
+  scroll-behavior: smooth;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.live-pane .live-toolbar {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  margin: -12px -18px 8px;
+  padding: 6px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  z-index: 1;
+}
+.live-pane .live-toolbar label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+.live-pane .live-toolbar button { font-size: 11px; padding: 2px 8px; }
+.live-pane .live-toolbar .spacer { flex: 1; }
+
+.live-pane .empty { color: var(--muted); padding: 40px; text-align: center; }
+
+/* Turn separator — a thin chip that breaks the stream into HTTP rounds */
+.live-pane .turn-sep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 8px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.live-pane .turn-sep::before, .live-pane .turn-sep::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--border);
+}
+.live-pane .turn-sep .meta { display: inline-flex; gap: 10px; }
+.live-pane .turn-sep .meta b { color: var(--fg); font-weight: 500; }
+.live-pane .turn-sep .meta .err { color: var(--del); }
+
+/* One row in the stream — a <details> (or <div> for stop). */
+.live-pane .flowrow {
+  position: relative;
+  padding: 4px 0;
+}
+.live-pane .flowrow > summary {
+  cursor: pointer;
+  list-style: none;
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+.live-pane .flowrow > summary::-webkit-details-marker { display: none; }
+.live-pane .flowrow:not(details) {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+.live-pane .flowrow .dot {
+  text-align: center;
+  color: var(--muted);
+  user-select: none;
+  padding-top: 2px;
+}
+.live-pane .flowrow .lead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.live-pane .flowrow .lead b { color: var(--fg); font-weight: 600; }
+.live-pane .flowrow .lead .summary,
+.live-pane .flowrow .lead .inline {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 800px;
+}
+
+/* When expanded, the body shows the full text — hide the title-line summary
+ * so we don't duplicate the content on two lines. Exception: tool_use rows
+ * that have been merged with their result (.has-output) keep the summary
+ * visible because it identifies the command/path (distinct from the output
+ * shown in the body). */
+.live-pane .flowrow[open] .lead .summary { display: none; }
+.live-pane .flowrow.has-output[open] .lead .summary { display: inline; }
+
+/* Body of an expanded row */
+.live-pane .flowrow > .body {
+  margin: 6px 0 6px 32px;
+  padding: 10px 12px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+/* Hover affordance + show/hide hint */
+.live-pane .flowrow > summary:hover { background: color-mix(in srgb, var(--accent-soft) 50%, transparent); border-radius: 4px; }
+.live-pane .flowrow .toggle {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.live-pane .flowrow > summary:hover .toggle { opacity: 1; }
+.live-pane .flowrow[open] .toggle::after { content: "hide"; }
+.live-pane .flowrow:not([open]) .toggle::after { content: "show"; }
+
+/* Paired tool_use ↔ tool_result share a colored stripe */
+.live-pane .flowrow.paired {
+  border-left: 2px solid hsl(var(--hue, 200) 60% 50% / 0.55);
+  padding-left: 8px;
+  margin-left: -10px;
+}
+
+/* Outlined tag chips (override classic style.css's filled pills) */
+.live-pane .tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  margin-left: 0;
+  letter-spacing: 0;
+}
+.live-pane .tag.ok { color: var(--add); border-color: color-mix(in srgb, var(--add) 40%, var(--border)); }
+.live-pane .tag.err { color: var(--del); border-color: color-mix(in srgb, var(--del) 40%, var(--border)); }
+.live-pane .tag.latest { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.live-pane .tag.skill { color: var(--cache); border-color: color-mix(in srgb, var(--cache) 40%, var(--border)); }
+.live-pane .tag.id { font-size: 9px; opacity: 0.7; }
+.live-pane .tag.pending { color: var(--muted); border-style: dashed; }
+
+/* Pattern tags — passive classification of the envelope kind. Small uppercase
+ * micro-chips, distinct from operational tags (ok/err/pending/callId). Tinted
+ * by category family so they're scannable at a glance. */
+.live-pane .tag.pat {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 0px 5px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--panel2) 70%, transparent);
+}
+/* user-envelope tags — cool/muted family */
+.live-pane .tag.pat-reminder    { color: var(--muted); border-color: var(--border); }
+.live-pane .tag.pat-hook        { color: #a78bfa; border-color: color-mix(in srgb, #a78bfa 40%, var(--border)); }
+.live-pane .tag.pat-slash       { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.live-pane .tag.pat-cmd-out     { color: var(--muted); border-color: var(--border); border-style: dashed; }
+.live-pane .tag.pat-memory      { color: var(--cache); border-color: color-mix(in srgb, var(--cache) 40%, var(--border)); }
+.live-pane .tag.pat-recap       { color: var(--cache); border-color: color-mix(in srgb, var(--cache) 40%, var(--border)); }
+.live-pane .tag.pat-image       { color: #60a5fa; border-color: color-mix(in srgb, #60a5fa 40%, var(--border)); }
+.live-pane .tag.pat-skill-load  { color: #a78bfa; border-color: color-mix(in srgb, #a78bfa 40%, var(--border)); }
+.live-pane .tag.pat-caveat      { color: var(--muted); border-color: var(--border); }
+.live-pane .tag.pat-empty       { color: var(--muted); border-color: var(--border); }
+/* tool-category tags — warm/structured family */
+.live-pane .tag.pat-file        { color: var(--add); border-color: color-mix(in srgb, var(--add) 40%, var(--border)); }
+.live-pane .tag.pat-shell       { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.live-pane .tag.pat-search      { color: var(--cache); border-color: color-mix(in srgb, var(--cache) 40%, var(--border)); }
+.live-pane .tag.pat-web         { color: #60a5fa; border-color: color-mix(in srgb, #60a5fa 40%, var(--border)); }
+.live-pane .tag.pat-task        { color: #f97316; border-color: color-mix(in srgb, #f97316 40%, var(--border)); }
+.live-pane .tag.pat-agent       { color: #ec4899; border-color: color-mix(in srgb, #ec4899 40%, var(--border)); }
+.live-pane .tag.pat-skill       { color: #a78bfa; border-color: color-mix(in srgb, #a78bfa 40%, var(--border)); }
+.live-pane .tag.pat-plan        { color: var(--cache); border-color: color-mix(in srgb, var(--cache) 40%, var(--border)); }
+.live-pane .tag.pat-ask         { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.live-pane .tag.pat-cron        { color: var(--muted); border-color: var(--border); }
+.live-pane .tag.pat-notify      { color: var(--cache); border-color: color-mix(in srgb, var(--cache) 40%, var(--border)); }
+.live-pane .tag.pat-mcp         { color: #60a5fa; border-color: color-mix(in srgb, #60a5fa 40%, var(--border)); }
+
+/* Nested "show input" disclosure beneath a merged tool row */
+.live-pane .flowrow .input-fold {
+  margin: 4px 0 6px 32px;
+  font-size: 11px;
+}
+.live-pane .flowrow .input-fold > summary {
+  cursor: pointer;
+  color: var(--muted);
+  list-style: none;
+  padding: 2px 4px;
+}
+.live-pane .flowrow .input-fold > summary::-webkit-details-marker { display: none; }
+.live-pane .flowrow .input-fold > summary::before { content: "▸ "; }
+.live-pane .flowrow .input-fold[open] > summary::before { content: "▾ "; }
+.live-pane .flowrow .input-fold > pre {
+  margin: 4px 0;
+  padding: 8px 10px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.live-pane .flowrow > .body.input-body { opacity: 0.85; }
+.live-pane .flowrow > .body.output-body { opacity: 1; }
+
+/* per-kind tint of the dot */
+.live-pane .flowrow.user .dot { color: var(--accent); }
+.live-pane .flowrow.assistant .dot { color: var(--fg); }
+.live-pane .flowrow.thinking .dot { color: var(--cache); }
+.live-pane .flowrow.tool_use .dot, .live-pane .flowrow.skill .dot { color: var(--accent); }
+.live-pane .flowrow.tool_result .dot { color: var(--muted); }
+.live-pane .flowrow.stop .dot { color: var(--muted); }
+
+/* Highlight a freshly-arrived row (SSE) */
+@keyframes flash-in {
+  from { background: color-mix(in srgb, var(--accent-soft) 100%, transparent); }
+  to { background: transparent; }
+}
+.live-pane .flowrow.flash { animation: flash-in 1.6s ease-out; }
+
+/* The "Live" entry at the top of the left list — pinned, distinct */
+#list .live-entry {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  margin: 0 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+#list .live-entry:hover { border-color: var(--accent); }
+#list .live-entry.sel { border-color: var(--accent); background: var(--accent-soft); }
+#list .live-entry .top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--fg);
+}
+#list .live-entry .top .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 var(--accent);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); }
+  70% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+#list .live-entry.off .top .dot { background: var(--muted); animation: none; }
+#list .live-entry .sub { font-size: 11px; color: var(--muted); }
+
+/* Rich tag popover — body-level, shown on hover over any [data-tag-key]. */
+.tag-popover {
+  position: fixed;
+  z-index: 1000;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font: 13px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--fg);
+  max-width: 360px;
+  box-shadow: 0 12px 28px var(--shadow), 0 0 0 1px var(--border) inset;
+}
+.tag-popover[hidden] { display: none; }
+.tag-popover .pop-head {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.tag-popover .pop-body { color: var(--fg); }
+.tag-popover .pop-doc {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.tag-popover .pop-doc a { color: var(--accent); text-decoration: none; }
+.tag-popover .pop-doc a:hover { text-decoration: underline; }
+
+/* Tags are now cursor:help to hint at the popover */
+.live-pane .tag[data-tag-key] { cursor: help; }
