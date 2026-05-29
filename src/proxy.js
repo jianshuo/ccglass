@@ -4,12 +4,20 @@
 
 import http from "node:http";
 import https from "node:https";
+import { buildAllowedHosts, hostGuardMiddleware, resolveAllowedHostsFromEnv } from "./host-guard.js";
 
-export function createProxy({ upstream, store }) {
+export function createProxy({ upstream, store, bindHost, allowedHosts } = {}) {
   const up = new URL(upstream);
   const client = up.protocol === "http:" ? http : https;
 
+  const hosts = allowedHosts || buildAllowedHosts({
+    bindHost: bindHost || "127.0.0.1",
+    allowedHostsEnv: resolveAllowedHostsFromEnv(process.env),
+  });
+  const hostGuard = hostGuardMiddleware({ allowedHosts: hosts });
+
   return http.createServer((req, res) => {
+    if (hostGuard(req, res)) return;
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
     req.on("end", () => {
