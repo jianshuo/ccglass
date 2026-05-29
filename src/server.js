@@ -12,6 +12,7 @@ import { aggregateSessionStats, latencyMs, requestTiming, sessionModels } from "
 import { diffBlockLists } from "./diff.js";
 import { renderExport } from "./export.js";
 import { summarizeUsage } from "./usage.js";
+import { buildAllowedHosts, hostGuardMiddleware, resolveAllowedHostsFromEnv } from "./host-guard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.join(__dirname, "..", "web");
@@ -19,8 +20,14 @@ const WEB_DIR = path.join(__dirname, "..", "web");
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
 
 // `store` is present in live (`ccglass claude`) mode; otherwise we read from disk.
-export function createServer({ roots, store }) {
+export function createServer({ roots, store, bindHost, allowedHosts } = {}) {
   const sseClients = new Set();
+
+  const hosts = allowedHosts || buildAllowedHosts({
+    bindHost: bindHost || "127.0.0.1",
+    allowedHostsEnv: resolveAllowedHostsFromEnv(process.env),
+  });
+  const hostGuard = hostGuardMiddleware({ allowedHosts: hosts });
 
   if (store) {
     const push = (rec) => {
@@ -32,6 +39,7 @@ export function createServer({ roots, store }) {
   }
 
   return http.createServer((req, res) => {
+    if (hostGuard(req, res)) return;
     const url = new URL(req.url, "http://localhost");
     const p = url.pathname;
 

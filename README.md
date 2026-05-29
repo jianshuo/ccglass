@@ -226,6 +226,20 @@ first time they are read.
 Auth tokens (`authorization`, `x-api-key`) are **masked by default** — pass
 `--no-redact` to keep them. Treat the log directory as sensitive regardless.
 
+### Host-header allowlist
+
+The dashboard and proxy bind `127.0.0.1` and reject HTTP requests whose `Host`
+header doesn't match a known local name (`127.0.0.1`, `localhost`, `::1`).
+That closes the DNS-rebinding path that would otherwise let a page the user
+visits read captured requests off the local dashboard.
+
+To serve the dashboard behind a reverse proxy or a `localhost.run` / `ngrok`
+tunnel, extend the allowlist with `CCGLASS_ALLOWED_HOSTS` (comma-separated):
+
+```bash
+CCGLASS_ALLOWED_HOSTS=ccglass.lan,tunnel.example ccglass claude
+```
+
 ## Requirements
 
 Node ≥ 18. The core proxy + dashboard have no runtime dependencies; the
