@@ -154,31 +154,22 @@ function forwardRequest(host, port, reqBuf, headers, bodyStart, tlsClient, store
   // Stream response back to client and capture it
   const respChunks = [];
   let firstByteAt;
-  let respHeaderParsed = false;
-  let respHeaderBuf = Buffer.alloc(0);
-  let respStatus = null;
-  let respHeaders = {};
-  let isChunked = false;
-  let bodyChunks = [];
+  let finished = false;
 
-  upstream.on("data", (chunk) => {
-    if (firstByteAt == null) firstByteAt = Date.now();
-    respChunks.push(chunk);
-    tlsClient.write(chunk);
-  });
-
-  upstream.on("end", () => {
-    tlsClient.end();
+  function finalize() {
+    if (finished) return;
+    finished = true;
     const doneAt = Date.now();
     const rawResp = Buffer.concat(respChunks).toString("utf8");
 
     // Parse status from response
     const statusMatch = rawResp.match(/^HTTP\/\d\.\d (\d+)/);
-    respStatus = statusMatch ? parseInt(statusMatch[1]) : null;
+    const respStatus = statusMatch ? parseInt(statusMatch[1]) : null;
 
     // Extract response headers
     const respHeaderEnd = rawResp.indexOf("\r\n\r\n");
     const respHeaderStr = respHeaderEnd > 0 ? rawResp.slice(0, respHeaderEnd) : "";
+    const respHeaders = {};
     for (const line of respHeaderStr.split("\r\n").slice(1)) {
       const colon = line.indexOf(":");
       if (colon > 0) {
@@ -204,12 +195,33 @@ function forwardRequest(host, port, reqBuf, headers, bodyStart, tlsClient, store
       finishedAt: doneAt,
     };
     store.update(rec);
+  }
+
+  upstream.on("data", (chunk) => {
+    if (firstByteAt == null) firstByteAt = Date.now();
+    respChunks.push(chunk);
+    tlsClient.write(chunk);
+
+    // Detect stream completion for keep-alive connections:
+    // Chunked encoding ends with "0\r\n\r\n"; SSE streams end with "data: [DONE]"
+    const str = chunk.toString("utf8");
+    if (str.endsWith("0\r\n\r\n") || str.includes("data: [DONE]")) {
+      finalize();
+    }
+  });
+
+  upstream.on("end", () => {
+    tlsClient.end();
+    finalize();
   });
 
   upstream.on("error", (e) => {
     tlsClient.end();
-    rec.response = { error: e.message, finishedAt: Date.now() };
-    store.update(rec);
+    if (!finished) {
+      finished = true;
+      rec.response = { error: e.message, finishedAt: Date.now() };
+      store.update(rec);
+    }
   });
 
   tlsClient.on("error", () => upstream.end());
