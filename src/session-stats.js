@@ -91,9 +91,12 @@ export function aggregateSessionStats(records, options = {}) {
     const fmt = detectFormat(rec);
     const A = getAdapter(fmt);
     const body = rec.request?.body || {};
-    const model = body.model;
     const parsed = resp.raw ? A.reassemble(resp.raw) : resp;
     const usage = parsed?.usage || {};
+    // Prefer the reassembled response model; the request body carries no model
+    // for Bedrock/gateway-proxied traffic, which would otherwise price at the
+    // Sonnet default tier (matches costFor in usage.js).
+    const model = parsed?.model || body.model;
     const c = A.cost(model, usage);
 
     totalInput += c.totalInput ?? c.input ?? 0;

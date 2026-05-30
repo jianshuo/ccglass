@@ -128,3 +128,25 @@ test("aggregateSessionStats sums tokens and cost across completed entries", () =
   assert.ok(stats.cacheHitRate > 0.7);
   assert.ok(stats.totalUsd > 0);
 });
+
+test("aggregateSessionStats prices by the reassembled response model, not the empty request body", () => {
+  // Bedrock/gateway traffic: the request body has no model, but the response
+  // carries one. Cost must use the response model's tier (Opus here) instead of
+  // falling through to the Sonnet default. Regression for the 4th cost callsite.
+  const stats = aggregateSessionStats([
+    {
+      format: "anthropic",
+      request: { body: {} }, // no model, as with Bedrock InvokeModelWithResponseStream
+      response: {
+        raw: JSON.stringify({
+          model: "claude-opus-4-5",
+          stop_reason: "end_turn",
+          usage: { input_tokens: 0, output_tokens: 1000 },
+          content: [{ type: "text", text: "ok" }],
+        }),
+      },
+    },
+  ]);
+  const sonnetDefault = (1000 * 15) / 1e6; // what body.model-only pricing gave
+  assert.ok(stats.totalUsd > sonnetDefault, `expected Opus pricing, got ${stats.totalUsd}`);
+});
