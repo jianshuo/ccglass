@@ -31,6 +31,19 @@ test("reasonix.cost uses DeepSeek v4-flash pricing", () => {
   assert.equal(c.cacheHitRate, 1);
 });
 
+test("reasonix.cost reports input as the uncached portion", () => {
+  const A = getAdapter("reasonix");
+  const c = A.cost("deepseek-v4-flash", {
+    prompt_tokens: 1000,
+    completion_tokens: 50,
+    prompt_cache_hit_tokens: 800,
+    prompt_cache_miss_tokens: 200,
+  });
+  assert.equal(c.input, 200); // uncached (1000 - 800), matching Anthropic's `input`
+  assert.equal(c.cacheRead, 800);
+  assert.equal(c.totalInput, 1000); // gross stays for cache-hit math
+});
+
 test("reasonix.reassemble applies DeepSeek usage on streamed chat", () => {
   const A = getAdapter("reasonix");
   const sse = [

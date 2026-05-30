@@ -48,7 +48,7 @@ function costReasonix(model, usage = {}) {
   const usd = (input * p.input + cached * p.cached + output * p.output) / 1e6;
   const totalInput = u.input_tokens || 0;
   return {
-    input: totalInput,
+    input, // uncached portion, matching the Anthropic adapter's `input`
     output,
     cacheWrite: 0,
     cacheRead: cached,
