@@ -41,6 +41,41 @@ test("reassembleResponse parses non-streaming JSON", () => {
   assert.equal(r.content[0].text, "hi");
 });
 
+test("reassembleResponse recovers Bedrock event-stream envelopes from a lossy body", () => {
+  const events = [
+    { type: "message_start", message: { model: "anthropic.claude-opus-4-5-20251101-v1:0", usage: { input_tokens: 30, cache_read_input_tokens: 10 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " there" } },
+    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 12 } },
+  ];
+  // Mimic vnd.amazon.eventstream after a lossy toString("utf8"): each frame's
+  // ASCII payload survives (some frames carry a trailing "p" signature field),
+  // while the binary prelude/CRC framing around it becomes U+FFFD + NUL bytes.
+  const GARBAGE = "��\x00�";
+  const raw = events
+    .map((ev, i) => {
+      const b64 = Buffer.from(JSON.stringify(ev)).toString("base64");
+      const envelope = i % 2 ? `{"bytes":"${b64}","p":"abcd"}` : `{"bytes":"${b64}"}`;
+      return `${GARBAGE}${envelope}${GARBAGE}`;
+    })
+    .join("");
+
+  const r = reassembleResponse(raw);
+  assert.equal(r.streamed, true);
+  assert.equal(r.model, "anthropic.claude-opus-4-5-20251101-v1:0");
+  assert.equal(r.stop_reason, "end_turn");
+  assert.equal(r.usage.input_tokens, 30);
+  assert.equal(r.usage.output_tokens, 12);
+  assert.equal(r.content[0].text, "Hi there");
+});
+
+test("reassembleResponse leaves an unrecognizable body unparsed", () => {
+  const r = reassembleResponse("�� garbage with no envelopes \x00\x01");
+  assert.equal(r.content.length, 0);
+  assert.equal(r.usage.input_tokens, undefined);
+});
+
 test("blockText flattens block types", () => {
   assert.equal(blockText({ type: "text", text: "a" }), "a");
   assert.match(blockText({ type: "tool_use", name: "Bash", input: { x: 1 } }), /tool_use Bash/);
