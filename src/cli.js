@@ -12,6 +12,8 @@ import { spawnCommand } from "./spawn-command.js";
 import { Store, hasCapturedLogs } from "./store.js";
 import { exportEntry, migrate, repack, rmCmd, usageCmd } from "./log-cli.js";
 import { createProxy } from "./proxy.js";
+import { createForwardProxy } from "./forward-proxy.js";
+import { ensureCA } from "./ca.js";
 import { createServer } from "./server.js";
 import { resolveProvider, PROVIDERS, PICKABLE } from "./providers.js";
 import { globalRoot, legacyRoot, readRoots } from "./paths.js";
@@ -34,6 +36,7 @@ USAGE
   ccglass reasonix [args...]    Inspect Reasonix
   ccglass kimi   [args...]      Inspect Kimi (Moonshot, via Claude Code)
   ccglass opencode [args...]    Inspect OpenCode
+  ccglass codebuddy             Inspect CodeBuddy (forward-proxy mode)
   ccglass run [--provider P] -- <cmd...>   Inspect any client
   ccglass view                  Open the dashboard over saved logs
   ccglass migrate               Copy ./.ccglass logs (this project only) to the global store
@@ -235,6 +238,12 @@ function settingsEnvBaseUrl(envVar) {
 
 async function wrap(command, args, opts) {
   const provider = resolveProvider(command, opts.provider, opts.envVar);
+
+  // Forward-proxy mode: CONNECT tunnel + TLS MITM (e.g. CodeBuddy)
+  if (provider.mode === "forward-proxy") {
+    return wrapForward(provider, opts);
+  }
+
   const claudeBased = provider.command === "claude";
 
   // Detect Codex ChatGPT-auth / websocket mode early so we can warn the user
@@ -411,6 +420,46 @@ async function wrap(command, args, opts) {
   });
 
   for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => child.kill(sig));
+}
+
+async function wrapForward(provider, opts) {
+  const caDir = path.join(opts.dir, "ca");
+  const ca = ensureCA(caDir);
+  const targets = provider.targets || [];
+
+  maybeLegacyHint(process.cwd(), opts.dir);
+
+  const store = new Store({ root: opts.dir, redact: opts.redact, format: provider.format });
+  const proxy = createForwardProxy({ store, targets, ca });
+  const dashboard = createServer({ roots: opts.readRoots, store });
+
+  const proxyPort = await listen(proxy, opts.proxyPort);
+  const dashPort = await listen(dashboard, opts.port);
+  const dashUrl = `http://127.0.0.1:${dashPort}`;
+  const proxyUrl = `http://127.0.0.1:${proxyPort}`;
+
+  process.stderr.write(
+    `\n  \x1b[36m●\x1b[0m ccglass forward-proxy watching \x1b[1m${provider.label}\x1b[0m` +
+    `\n    proxy:     \x1b[1m${proxyUrl}\x1b[0m` +
+    `\n    dashboard: \x1b[1m${dashUrl}\x1b[0m` +
+    `\n    intercepting: ${targets.join(", ")}` +
+    `\n` +
+    `\n    Add to your client settings:` +
+    `\n      "http.proxy": "${proxyUrl}"` +
+    `\n      "http.proxyStrictSSL": false` +
+    `\n` +
+    (provider.note ? `    \x1b[33mnote:\x1b[0m ${provider.note}\n` : "") +
+    `\n    Press Ctrl-C to stop.\n\n`
+  );
+
+  if (opts.open) openBrowser(dashUrl);
+
+  const shutdown = () => {
+    proxy.close();
+    dashboard.close();
+    process.exit(0);
+  };
+  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, shutdown);
 }
 
 async function view(opts) {

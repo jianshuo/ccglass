@@ -2,7 +2,7 @@
 
 **See exactly what your coding agent sends to the model.** A lightweight
 local logging reverse-proxy + web dashboard for **Claude Code, Codex,
-OpenCode, DeepSeek-TUI, Reasonix, Kimi, Ollama, OpenRouter, and more**.
+OpenCode, DeepSeek-TUI, Reasonix, CodeBuddy, Kimi, Ollama, OpenRouter, and more**.
 One command, like `ollama`:
 
 ```bash
@@ -25,6 +25,7 @@ Run with no arguments and `ccglass` asks which client to inspect:
     4) Reasonix
     5) Kimi (Moonshot, via Claude Code)
     6) OpenCode
+    7) CodeBuddy (Tencent)
 
   >
 ```
@@ -68,6 +69,7 @@ pinning.
 | `glm` | any GLM/Zhipu-backed client | `OPENAI_BASE_URL` | auto (from env) | OpenAI Chat |
 | `bedrock` | Claude Code → AWS Bedrock | `ANTHROPIC_BEDROCK_BASE_URL` | auto (from env) | Anthropic Messages |
 | `vertex` | Claude Code → Google Vertex AI | `ANTHROPIC_BASE_URL` | auto (from env) | Anthropic Messages |
+| `codebuddy` | CodeBuddy (IDE / VS Code / JetBrains) | forward-proxy | copilot.tencent.com | OpenAI Chat |
 | `run --provider <p> -- <cmd>` | any client | per provider | per provider | per provider |
 
 **Notes by provider:**
@@ -82,6 +84,7 @@ pinning.
 - **GLM/Zhipu** — set `OPENAI_BASE_URL` to your Zhipu endpoint (e.g. `https://open.bigmodel.cn/api/paas/v4`) and `OPENAI_API_KEY` to your Zhipu key.
 - **AWS Bedrock** — set `ANTHROPIC_BEDROCK_BASE_URL` to your Bedrock endpoint before running. Claude Code in Bedrock mode reads its endpoint from this var (not `ANTHROPIC_BASE_URL`). Works against Bedrock-compat gateways (bearer / mTLS auth). Direct AWS endpoints (`*.amazonaws.com`) will fail through the proxy because SigV4 signs the Host header — ccglass prints a warning if it detects this.
 - **Google Vertex AI** — set `ANTHROPIC_BASE_URL` to your Vertex AI endpoint (e.g. `https://us-east5-aiplatform.googleapis.com`) before running; GCP credentials are forwarded as-is.
+- **CodeBuddy** — uses a **forward-proxy** mode (HTTP CONNECT + TLS MITM) because CodeBuddy's built-in models hardcode their upstream URL. See [CodeBuddy setup](#codebuddy) below.
 
 ### Custom provider recipe
 
@@ -122,6 +125,68 @@ Output:
 Point your IDE's API base URL at the printed proxy address, then open the dashboard URL to watch every request in real time.
 
 **Limitation:** This only works when the IDE is configured to use *your own API key* with a custom base URL (BYOK mode). Cursor's built-in subscription models route through Cursor's own backend (`api2.cursor.sh`) and cannot be intercepted this way.
+
+## CodeBuddy
+
+CodeBuddy (Tencent) uses built-in models whose API endpoint (`copilot.tencent.com`) is hardcoded — it cannot be redirected via environment variables. ccglass uses a **forward-proxy** mode to intercept these requests: it accepts HTTP CONNECT tunnels, performs TLS MITM on targeted hosts only, and forwards the decrypted traffic to the real upstream.
+
+This works with **CodeBuddy IDE**, **VS Code plugin**, **JetBrains plugin**, and **Visual Studio plugin** — any form factor that supports HTTP proxy settings.
+
+### Quick start
+
+```bash
+ccglass codebuddy
+```
+
+Output:
+
+```
+  ● ccglass forward-proxy watching CodeBuddy (Tencent)
+    proxy:     http://127.0.0.1:9999
+    dashboard: http://127.0.0.1:56181
+    intercepting: copilot.tencent.com
+
+    Add to your client settings:
+      "http.proxy": "http://127.0.0.1:9999"
+      "http.proxyStrictSSL": false
+
+    Press Ctrl-C to stop.
+```
+
+### Configure your IDE
+
+**CodeBuddy IDE / VS Code plugin** — open `settings.json` (`Cmd+,` or `Ctrl+,`, then "Open Settings (JSON)") and add:
+
+```json
+{
+  "http.proxy": "http://127.0.0.1:9999",
+  "http.proxyStrictSSL": false
+}
+```
+
+**JetBrains plugin** — go to *Settings → Appearance & Behavior → System Settings → HTTP Proxy*, select *Manual proxy configuration*, and set Host: `127.0.0.1`, Port: `9999`.
+
+**Visual Studio plugin** — go to *Tools → Options → Environment → Network*, configure the proxy address.
+
+> Use the port number from the `ccglass codebuddy` output (or fix it with `--proxy-port 9999`).
+
+### How it works
+
+```
+CodeBuddy → http.proxy → ccglass forward-proxy (CONNECT + TLS MITM)
+                              │
+                              ├─ intercept & log POST /v2/chat/completions
+                              │
+                              └─ forward → copilot.tencent.com:443
+```
+
+- Only `copilot.tencent.com` traffic is intercepted; all other HTTPS traffic (npm, git, etc.) passes through transparently without decryption.
+- A local CA certificate is auto-generated on first run (stored in the session directory). Setting `http.proxyStrictSSL: false` tells the IDE to accept it without system-level trust.
+- Request bodies are gzip-compressed by CodeBuddy; ccglass decompresses them for display in the dashboard.
+
+### Cleanup
+
+When you're done, remove the proxy settings from your IDE and press `Ctrl-C` to stop ccglass. Your captured logs remain available via `ccglass view`.
 
 ## What you get
 
@@ -169,6 +234,7 @@ ccglass reasonix [args...]    # inspect Reasonix
 ccglass dsnix    [args...]    # inspect Reasonix (dsnix alias)
 ccglass kimi   [args...]      # inspect Kimi (via Claude Code)
 ccglass opencode [args...]    # inspect OpenCode (auto-detects upstream from OPENAI_BASE_URL)
+ccglass codebuddy             # inspect CodeBuddy (forward-proxy mode)
 ccglass run --provider openai -- <cmd...>   # inspect any client
 ccglass proxy --provider openai            # proxy only — point your IDE at the proxy URL
 ccglass view                  # re-open the dashboard over saved logs (global + ./.ccglass)

@@ -140,9 +140,18 @@ export const PROVIDERS = {
     mcp: true,
     note: "Vertex AI: set ANTHROPIC_BASE_URL to your Vertex endpoint before running (e.g. https://us-east5-aiplatform.googleapis.com). GCP credentials are forwarded as-is.",
   },
+  codebuddy: {
+    label: "CodeBuddy (Tencent)",
+    command: null,
+    format: "openai",
+    mode: "forward-proxy",
+    targets: ["copilot.tencent.com"],
+    upstream: "https://copilot.tencent.com",
+    note: "CodeBuddy IDE uses built-in models via copilot.tencent.com. Set http.proxy and http.proxyStrictSSL=false in CodeBuddy settings to route traffic through ccglass.",
+  },
 };
 
-export const PICKABLE = ["claude", "codex", "deepseek", "reasonix", "kimi", "opencode"]; // shown in the no-arg picker
+export const PICKABLE = ["claude", "codex", "deepseek", "reasonix", "kimi", "opencode", "codebuddy"]; // shown in the no-arg picker
 
 // Resolve a provider from a CLI token (e.g. "claude"), falling back to a custom
 // command wrapped under an explicit --provider.
