@@ -11,6 +11,7 @@ import net from "node:net";
 import tls from "node:tls";
 import zlib from "node:zlib";
 import { signHost } from "./ca.js";
+import { ResponseParser } from "./http-response-parser.js";
 
 /**
  * Create a forward proxy server.
@@ -151,8 +152,11 @@ function forwardRequest(host, port, reqBuf, headers, bodyStart, tlsClient, store
     upstream.write(reqBuf);
   });
 
-  // Stream response back to client and capture it
-  const respChunks = [];
+  // Side-channel parser: tracks HTTP framing on a copy of the bytes to know
+  // when the response is complete (keep-alive sockets may never emit "end").
+  // The forwarding path below is untouched raw pipe — parser failures only
+  // delay the dashboard, never affect the client connection.
+  const parser = new ResponseParser();
   let firstByteAt;
   let finished = false;
 
@@ -160,37 +164,10 @@ function forwardRequest(host, port, reqBuf, headers, bodyStart, tlsClient, store
     if (finished) return;
     finished = true;
     const doneAt = Date.now();
-    const rawResp = Buffer.concat(respChunks).toString("utf8");
-
-    // Parse status from response
-    const statusMatch = rawResp.match(/^HTTP\/\d\.\d (\d+)/);
-    const respStatus = statusMatch ? parseInt(statusMatch[1]) : null;
-
-    // Extract response headers
-    const respHeaderEnd = rawResp.indexOf("\r\n\r\n");
-    const respHeaderStr = respHeaderEnd > 0 ? rawResp.slice(0, respHeaderEnd) : "";
-    const respHeaders = {};
-    for (const line of respHeaderStr.split("\r\n").slice(1)) {
-      const colon = line.indexOf(":");
-      if (colon > 0) {
-        const k = line.slice(0, colon).trim().toLowerCase();
-        const v = line.slice(colon + 1).trim();
-        respHeaders[k] = v;
-      }
-    }
-
-    // Body is everything after headers
-    let respBody = respHeaderEnd > 0 ? rawResp.slice(respHeaderEnd + 4) : rawResp;
-
-    // Decode chunked transfer encoding for storage
-    if (respHeaders["transfer-encoding"]?.includes("chunked")) {
-      respBody = decodeChunked(respBody);
-    }
-
     rec.response = {
-      status: respStatus,
-      headers: respHeaders,
-      raw: respBody,
+      status: parser.status,
+      headers: parser.headers,
+      raw: parser.decodedBody(),
       firstByteAt: firstByteAt ?? doneAt,
       finishedAt: doneAt,
     };
@@ -199,15 +176,10 @@ function forwardRequest(host, port, reqBuf, headers, bodyStart, tlsClient, store
 
   upstream.on("data", (chunk) => {
     if (firstByteAt == null) firstByteAt = Date.now();
-    respChunks.push(chunk);
+    // Forward verbatim — do not touch this path.
     tlsClient.write(chunk);
-
-    // Detect stream completion for keep-alive connections:
-    // Chunked encoding ends with "0\r\n\r\n"; SSE streams end with "data: [DONE]"
-    const str = chunk.toString("utf8");
-    if (str.endsWith("0\r\n\r\n") || str.includes("data: [DONE]")) {
-      finalize();
-    }
+    // Feed a copy to the side-channel parser.
+    if (parser.feed(chunk)) finalize();
   });
 
   upstream.on("end", () => {
@@ -225,30 +197,4 @@ function forwardRequest(host, port, reqBuf, headers, bodyStart, tlsClient, store
   });
 
   tlsClient.on("error", () => upstream.end());
-}
-
-/** Decode HTTP chunked transfer encoding, stripping chunk-size lines. */
-function decodeChunked(raw) {
-  const out = [];
-  let pos = 0;
-  while (pos < raw.length) {
-    // Find end of chunk-size line
-    const lineEnd = raw.indexOf("\r\n", pos);
-    if (lineEnd < 0) break;
-    const sizeLine = raw.slice(pos, lineEnd).trim();
-    const size = parseInt(sizeLine, 16);
-    if (isNaN(size) || size === 0) break;
-    // Chunk data starts after the \r\n
-    const dataStart = lineEnd + 2;
-    const dataEnd = dataStart + size;
-    if (dataEnd > raw.length) {
-      // Incomplete chunk — take what we have
-      out.push(raw.slice(dataStart));
-      break;
-    }
-    out.push(raw.slice(dataStart, dataEnd));
-    // Skip trailing \r\n after chunk data
-    pos = dataEnd + 2;
-  }
-  return out.join("");
 }

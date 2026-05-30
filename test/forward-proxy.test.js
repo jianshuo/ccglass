@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import net from "node:net";
-import tls from "node:tls";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -76,54 +75,4 @@ test("forward-proxy tunnels non-target hosts transparently", async () => {
   echo.close();
   store.cleanup();
   fs.rmSync(caDir, { recursive: true, force: true });
-});
-
-test("decodeChunked strips chunk-size lines", async () => {
-  // "data: {\"hello\":\"world\"}\n\n" is 25 bytes = 0x19
-  const chunked = "19\r\ndata: {\"hello\":\"world\"}\n\n\r\n0\r\n\r\n";
-  const expected = "data: {\"hello\":\"world\"}\n\n";
-
-  function decodeChunked(raw) {
-    const out = [];
-    let pos = 0;
-    while (pos < raw.length) {
-      const lineEnd = raw.indexOf("\r\n", pos);
-      if (lineEnd < 0) break;
-      const sizeLine = raw.slice(pos, lineEnd).trim();
-      const size = parseInt(sizeLine, 16);
-      if (isNaN(size) || size === 0) break;
-      const dataStart = lineEnd + 2;
-      const dataEnd = dataStart + size;
-      if (dataEnd > raw.length) { out.push(raw.slice(dataStart)); break; }
-      out.push(raw.slice(dataStart, dataEnd));
-      pos = dataEnd + 2;
-    }
-    return out.join("");
-  }
-
-  const result = decodeChunked(chunked);
-  assert.strictEqual(result, expected);
-});
-
-test("decodeChunked handles multiple chunks", () => {
-  function decodeChunked(raw) {
-    const out = [];
-    let pos = 0;
-    while (pos < raw.length) {
-      const lineEnd = raw.indexOf("\r\n", pos);
-      if (lineEnd < 0) break;
-      const sizeLine = raw.slice(pos, lineEnd).trim();
-      const size = parseInt(sizeLine, 16);
-      if (isNaN(size) || size === 0) break;
-      const dataStart = lineEnd + 2;
-      const dataEnd = dataStart + size;
-      if (dataEnd > raw.length) { out.push(raw.slice(dataStart)); break; }
-      out.push(raw.slice(dataStart, dataEnd));
-      pos = dataEnd + 2;
-    }
-    return out.join("");
-  }
-
-  const chunked = "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
-  assert.strictEqual(decodeChunked(chunked), "hello world");
 });
