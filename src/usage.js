@@ -19,10 +19,11 @@ function blankBucket() {
   };
 }
 
-// Adapters disagree on what `input` means: Anthropic returns the uncached
-// portion, OpenAI returns the gross `input_tokens` (already including cached).
-// Trust each adapter's `totalInput' instead of recomputing — otherwise the
-// rollup double-counts OpenAI cached tokens.
+// Every adapter now reports `input` as the uncached portion and `cacheRead` as
+// the cached portion, with `totalInput` the gross (uncached + cached). Sum
+// `totalInput` for cache-hit math rather than recomputing it from input +
+// cacheRead + cacheWrite, so the rollup stays correct no matter how each API
+// reports its raw counts.
 function addInto(bucket, cost) {
   bucket.requests += 1;
   bucket.input += cost.input || 0;
@@ -40,6 +41,9 @@ function deriveTotals(b) {
 
 // Reassemble one record's response and ask its adapter for cost. Returns null
 // when the record has no parseable usage (in-flight, errored, or non-LLM).
+// The model comes from the reassembled response (the source of truth) rather
+// than the request body, which is empty for Bedrock/gateway-proxied traffic
+// and would otherwise bucket every such request under "unknown".
 function costFor(rec) {
   const adapter = getAdapter(detectFormat(rec));
   const resp = rec.response?.raw ? adapter.reassemble(rec.response.raw) : rec.response || {};
@@ -47,7 +51,8 @@ function costFor(rec) {
   if (!usage || (!usage.input_tokens && !usage.output_tokens && !usage.prompt_tokens && !usage.completion_tokens)) {
     return null;
   }
-  return adapter.cost(rec.request?.body?.model, usage);
+  const model = resp?.model || rec.request?.body?.model || "unknown";
+  return { cost: adapter.cost(model, usage), model };
 }
 
 export function summarizeUsage(roots) {
@@ -71,13 +76,13 @@ export function summarizeUsage(roots) {
         if (from == null || rec.ts < from) from = rec.ts;
         if (to == null || rec.ts > to) to = rec.ts;
       }
-      const cost = costFor(rec);
-      if (!cost) { unmeasured += 1; continue; }
+      const res = costFor(rec);
+      if (!res) { unmeasured += 1; continue; }
+      const { cost, model } = res;
 
       addInto(totals, cost);
       addInto(sessionBucket, cost);
 
-      const model = rec.request?.body?.model || "unknown";
       if (!byModelMap.has(model)) byModelMap.set(model, blankBucket());
       addInto(byModelMap.get(model), cost);
     }

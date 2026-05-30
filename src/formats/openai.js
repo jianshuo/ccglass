@@ -244,7 +244,7 @@ export const openai = {
     const usd = (input * p.input + cached * p.cached + output * p.output) / 1e6;
     const totalInput = usage.input_tokens || 0;
     return {
-      input: usage.input_tokens || 0,
+      input, // uncached portion, matching the Anthropic adapter's `input`
       output,
       cacheWrite: 0,
       cacheRead: cached,

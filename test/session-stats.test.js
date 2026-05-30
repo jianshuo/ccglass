@@ -128,3 +128,56 @@ test("aggregateSessionStats sums tokens and cost across completed entries", () =
   assert.ok(stats.cacheHitRate > 0.7);
   assert.ok(stats.totalUsd > 0);
 });
+
+test("aggregateSessionStats prices by the reassembled response model, not the empty request body", () => {
+  // Bedrock/gateway traffic: the request body has no model, but the response
+  // carries one. Cost must use the response model's tier (Opus here) instead of
+  // falling through to the Sonnet default. Regression for the 4th cost callsite.
+  const stats = aggregateSessionStats([
+    {
+      format: "anthropic",
+      request: { body: {} }, // no model, as with Bedrock InvokeModelWithResponseStream
+      response: {
+        raw: JSON.stringify({
+          model: "claude-opus-4-5",
+          stop_reason: "end_turn",
+          usage: { input_tokens: 0, output_tokens: 1000 },
+          content: [{ type: "text", text: "ok" }],
+        }),
+      },
+    },
+  ]);
+  const sonnetDefault = (1000 * 15) / 1e6; // what body.model-only pricing gave
+  assert.ok(stats.totalUsd > sonnetDefault, `expected Opus pricing, got ${stats.totalUsd}`);
+});
+
+test("sessionModels and filtering use the priced response model, not a differing request alias", () => {
+  // A gateway sets a request-body model that differs from what the upstream
+  // actually answered with. Pricing already uses the response model; the dropdown
+  // and the filter must agree, or filtering by the real model returns nothing
+  // while the alias is charged at the response tier. Regression for Codex P2.
+  const rec = {
+    format: "anthropic",
+    request: { body: { model: "claude-sonnet-gateway-alias" } },
+    response: {
+      raw: JSON.stringify({
+        model: "claude-opus-4-5",
+        stop_reason: "end_turn",
+        usage: { input_tokens: 0, output_tokens: 1000 },
+        content: [{ type: "text", text: "ok" }],
+      }),
+    },
+  };
+
+  // Dropdown offers the priced (response) model, not the request alias.
+  assert.deepEqual(sessionModels([rec]), ["claude-opus-4-5"]);
+
+  // Filtering by the real model matches and is charged.
+  const real = aggregateSessionStats([rec], { model: "claude-opus-4-5" });
+  assert.equal(real.total, 1);
+  assert.ok(real.totalUsd > 0);
+
+  // Filtering by the request alias matches nothing — it was never the priced id.
+  const alias = aggregateSessionStats([rec], { model: "claude-sonnet-gateway-alias" });
+  assert.equal(alias.total, 0);
+});

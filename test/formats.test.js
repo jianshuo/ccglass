@@ -99,7 +99,8 @@ test("openai.reassemble rebuilds Chat Completions stream", () => {
 test("openai.cost subtracts cached tokens from billed input", () => {
   const c = openai.cost("gpt-5-codex", { input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: 800 });
   assert.equal(c.cacheRead, 800);
-  assert.equal(c.totalInput, 1000);
+  assert.equal(c.input, 200); // uncached portion (1000 - 800), matching Anthropic's `input`
+  assert.equal(c.totalInput, 1000); // gross stays for cache-hit math
   assert.ok(Math.abs(c.cacheHitRate - 0.8) < 1e-9);
   assert.ok(c.usd > 0);
 });

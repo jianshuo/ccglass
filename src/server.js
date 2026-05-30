@@ -107,7 +107,7 @@ function apiRequest(roots, store, id) {
       view: A.view(body),
       response,
       estTokens: A.estimateTokens(body),
-      cost: A.cost(body.model, usage),
+      cost: A.cost(response?.model || body.model, usage),
     },
   };
 }

@@ -37,37 +37,50 @@ export function requestTiming(rec, usage = {}) {
   };
 }
 
-/** Model id for filtering — request body first, then parsed error/stream response. */
-export function recordModel(rec) {
+/**
+ * Model id for a record.
+ *
+ * Default (body-first) is the cheap label for the session *list* overview
+ * (`store.js` maps it over every live entry): trust the request body's model and
+ * only reassemble the response when the body has none.
+ *
+ * `preferResponse: true` resolves the reassembled *response* model first, the
+ * same precedence `aggregateSessionStats` prices by (`parsed.model ||
+ * body.model`). The per-session dropdown + filter use it so a gateway/Bedrock
+ * record whose request body has no model — or a differing alias — is listed,
+ * filtered, and charged under one consistent (priced) model id.
+ */
+export function recordModel(rec, { preferResponse = false } = {}) {
   const body = rec.request?.body;
-  if (body && typeof body === "object" && body.model) return body.model;
+  const bodyModel = body && typeof body === "object" && body.model ? body.model : null;
+  if (!preferResponse && bodyModel) return bodyModel;
 
   const raw = rec.response?.raw;
-  if (!raw || typeof raw !== "string") return null;
+  if (raw && typeof raw === "string") {
+    try {
+      const A = getAdapter(detectFormat(rec));
+      const parsed = A.reassemble(raw);
+      if (parsed?.model) return parsed.model;
+    } catch {
+      /* fall through */
+    }
 
-  try {
-    const A = getAdapter(detectFormat(rec));
-    const parsed = A.reassemble(raw);
-    if (parsed?.model) return parsed.model;
-  } catch {
-    /* fall through */
+    try {
+      const json = JSON.parse(raw.trimStart());
+      if (json?.model) return json.model;
+    } catch {
+      /* not JSON */
+    }
   }
 
-  try {
-    const json = JSON.parse(raw.trimStart());
-    if (json?.model) return json.model;
-  } catch {
-    /* not JSON */
-  }
-
-  return null;
+  return bodyModel;
 }
 
 /** Unique model names used in a session, sorted. */
 export function sessionModels(records) {
   const set = new Set();
   for (const rec of records) {
-    const m = recordModel(rec);
+    const m = recordModel(rec, { preferResponse: true });
     if (m) set.add(m);
   }
   return [...set].sort();
@@ -76,7 +89,9 @@ export function sessionModels(records) {
 export function aggregateSessionStats(records, options = {}) {
   const model = options.model;
   const scoped =
-    model && model !== "all" ? records.filter((r) => recordModel(r) === model) : records;
+    model && model !== "all"
+      ? records.filter((r) => recordModel(r, { preferResponse: true }) === model)
+      : records;
 
   let totalInput = 0;
   let totalOutput = 0;
@@ -91,9 +106,12 @@ export function aggregateSessionStats(records, options = {}) {
     const fmt = detectFormat(rec);
     const A = getAdapter(fmt);
     const body = rec.request?.body || {};
-    const model = body.model;
     const parsed = resp.raw ? A.reassemble(resp.raw) : resp;
     const usage = parsed?.usage || {};
+    // Prefer the reassembled response model; the request body carries no model
+    // for Bedrock/gateway-proxied traffic, which would otherwise price at the
+    // Sonnet default tier (matches costFor in usage.js).
+    const model = parsed?.model || body.model;
     const c = A.cost(model, usage);
 
     totalInput += c.totalInput ?? c.input ?? 0;

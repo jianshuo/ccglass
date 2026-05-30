@@ -21,7 +21,7 @@ function priceOf(rec) {
   const adapter = getAdapter(detectFormat(rec));
   const resp = rec.response?.raw ? adapter.reassemble(rec.response.raw) : rec.response || {};
   const usage = resp?.usage || {};
-  return { usage, cost: adapter.cost(rec.request?.body?.model, usage), reassembled: resp };
+  return { usage, cost: adapter.cost(resp?.model || rec.request?.body?.model, usage), reassembled: resp };
 }
 
 const CWD = process.env.CCGLASS_CWD

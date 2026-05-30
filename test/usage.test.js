@@ -166,6 +166,40 @@ test("summarizeUsage does not double-count OpenAI cached input", () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("summarizeUsage buckets by the reassembled response model, not the request body", () => {
+  // Bedrock / gateway-proxied shape: the request body carries no model, but the
+  // streamed response does. The rollup must key off the response so traffic does
+  // not collapse into "unknown" and get priced at the Sonnet default tier.
+  const root = mkRoot("resp-model");
+  const store = new Store({ root, format: "anthropic" });
+  const rec = store.add({
+    request: { method: "POST", url: "/v1/messages", headers: {}, body: { messages: [], tools: [] } },
+  });
+  rec.response = {
+    status: 200,
+    raw: JSON.stringify({
+      type: "message",
+      model: "claude-opus-4-5",
+      stop_reason: "end_turn",
+      content: [],
+      usage: { input_tokens: 100, output_tokens: 50 },
+    }),
+  };
+  store.update(rec);
+
+  const out = summarizeUsage([root]);
+  assert.equal(out.byModel.length, 1);
+  assert.equal(out.byModel[0].model, "claude-opus-4-5");
+  // Priced at the Opus tier, not the Sonnet default that "unknown" would fall to.
+  const sonnetDefault = (100 * 3 + 50 * 15) / 1e6;
+  assert.ok(
+    out.byModel[0].usd > sonnetDefault,
+    `expected Opus-tier pricing > Sonnet default ${sonnetDefault}; got ${out.byModel[0].usd}`,
+  );
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("summarizeUsage groups unknown model under 'unknown'", () => {
   const root = mkRoot("unknown-model");
   const store = new Store({ root, format: "anthropic" });

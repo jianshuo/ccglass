@@ -42,11 +42,27 @@ export function reassembleResponse(raw) {
     }
   }
 
-  const blocks = [];
-  let usage = {};
-  let stop_reason = null;
-  let model = null;
-  let error;
+  const state = { blocks: [], usage: {}, stop_reason: null, model: null, error: undefined };
+
+  // AWS Bedrock streams `application/vnd.amazon.eventstream`. Its binary frame
+  // headers (length preludes, CRC32s) are destroyed when the proxy stores the
+  // body as a UTF-8 string (src/proxy.js), but each frame's ASCII payload —
+  // `{"bytes":"<base64>", ...}`, base64-decoding to one Anthropic event —
+  // survives intact. When the body carries no `data:` SSE lines but does carry
+  // such envelopes, recover the events from them. See
+  // docs/cost-and-model-bucketing.md.
+  if (!/^data:/m.test(raw) && /"bytes":"[A-Za-z0-9+/=]+"/.test(raw)) {
+    for (const match of raw.matchAll(/"bytes":"([A-Za-z0-9+/=]+)"/g)) {
+      let ev;
+      try {
+        ev = JSON.parse(Buffer.from(match[1], "base64").toString("utf8"));
+      } catch {
+        continue;
+      }
+      applyEvent(state, ev);
+    }
+    return finalizeState(state);
+  }
 
   for (const line of raw.split(/\r?\n/)) {
     if (!line.startsWith("data:")) continue;
@@ -58,34 +74,44 @@ export function reassembleResponse(raw) {
     } catch {
       continue;
     }
-    switch (ev.type) {
-      case "message_start":
-        model = ev.message?.model ?? model;
-        usage = { ...usage, ...(ev.message?.usage || {}) };
-        break;
-      case "content_block_start":
-        blocks[ev.index] = startBlock(ev.content_block);
-        break;
-      case "content_block_delta":
-        applyDelta(blocks[ev.index], ev.delta);
-        break;
-      case "message_delta":
-        if (ev.delta?.stop_reason) stop_reason = ev.delta.stop_reason;
-        if (ev.usage) usage = { ...usage, ...ev.usage };
-        break;
-      case "error":
-        error = ev.error;
-        break;
-    }
+    applyEvent(state, ev);
   }
 
+  return finalizeState(state);
+}
+
+// Fold one streaming event into the accumulating reassembly state. Shared by
+// the Anthropic SSE path and the Bedrock event-stream envelope path.
+function applyEvent(state, ev) {
+  switch (ev.type) {
+    case "message_start":
+      state.model = ev.message?.model ?? state.model;
+      state.usage = { ...state.usage, ...(ev.message?.usage || {}) };
+      break;
+    case "content_block_start":
+      state.blocks[ev.index] = startBlock(ev.content_block);
+      break;
+    case "content_block_delta":
+      applyDelta(state.blocks[ev.index], ev.delta);
+      break;
+    case "message_delta":
+      if (ev.delta?.stop_reason) state.stop_reason = ev.delta.stop_reason;
+      if (ev.usage) state.usage = { ...state.usage, ...ev.usage };
+      break;
+    case "error":
+      state.error = ev.error;
+      break;
+  }
+}
+
+function finalizeState(state) {
   return {
     streamed: true,
-    model,
-    stop_reason,
-    usage,
-    content: blocks.filter(Boolean).map(finalizeBlock),
-    error,
+    model: state.model,
+    stop_reason: state.stop_reason,
+    usage: state.usage,
+    content: state.blocks.filter(Boolean).map(finalizeBlock),
+    error: state.error,
   };
 }
 

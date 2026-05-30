@@ -23,16 +23,38 @@ export function estimateRequestTokens(body) {
 }
 
 // USD per 1M tokens. Approximate public Claude pricing; edit as needed.
+// Cache columns follow Anthropic's multipliers: 5m write = 1.25x input,
+// read = 0.1x input. Opus and Haiku are split by generation: Opus 4.5 (2025-11)
+// cut the rate to $5/$25 and 4.6+ kept it, while Opus 3/4/4.1 stay at $15/$75;
+// the three Haiku generations live at $0.25 / $0.80 / $1.00 input.
 const PRICES = {
-  opus: { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 },
+  opus: { input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 },
+  opusLegacy: { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 },
   sonnet: { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
-  haiku: { input: 0.8, output: 4, cacheWrite: 1.0, cacheRead: 0.08 },
+  haiku45: { input: 1, output: 5, cacheWrite: 1.25, cacheRead: 0.1 },
+  haiku35: { input: 0.8, output: 4, cacheWrite: 1.0, cacheRead: 0.08 },
+  haiku3: { input: 0.25, output: 1.25, cacheWrite: 0.3125, cacheRead: 0.025 },
 };
 
 function priceFor(model = "") {
   const m = model.toLowerCase();
-  if (m.includes("opus")) return PRICES.opus;
-  if (m.includes("haiku")) return PRICES.haiku;
+  if (m.includes("opus")) {
+    // Opus 4.5 (2025-11) cut pricing to $5/$25 and Opus 4.6+ kept it; only the
+    // dated legacy ids — Opus 3 (`3-opus`), 4.0 (`opus-4-2025…`), 4.1
+    // (`opus-4-1`) — bill at the old $15/$75. Default current/newer Opus to the
+    // cut rate.
+    if (m.includes("3-opus") || m.includes("opus-4-1") || /opus-4-20\d\d/.test(m)) {
+      return PRICES.opusLegacy;
+    }
+    return PRICES.opus;
+  }
+  if (m.includes("haiku")) {
+    // Generation appears as `3-5-haiku` / `3-haiku` (older) or `haiku-4-5`
+    // (newer). Check the dated 3.x ids first; a bare/newer "haiku" is 4.x.
+    if (m.includes("3-5-haiku")) return PRICES.haiku35;
+    if (m.includes("3-haiku")) return PRICES.haiku3;
+    return PRICES.haiku45;
+  }
   return PRICES.sonnet;
 }
 
