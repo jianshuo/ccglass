@@ -10,6 +10,7 @@
 //   json — the full stored record (parsed body + raw response + metadata).
 
 import { getAdapter, detectFormat } from "./formats/index.js";
+import { localTimestamp } from "./store.js";
 
 const headerLines = (headers) =>
   Object.entries(headers || {})
@@ -73,7 +74,7 @@ export function toMarkdown(rec) {
   out.push(`# ${rec.request?.method} ${rec.request?.url}\n`);
   out.push(`- format: ${fmt}`);
   out.push(`- model: ${body.model}`);
-  out.push(`- captured: ${new Date(rec.ts).toISOString()}\n`);
+  out.push(`- captured: ${localTimestamp(rec.ts)}\n`);
   out.push("## System\n");
   for (const b of view.system) out.push(`**${b.label}**\n\n` + "```text\n" + b.text + "\n```\n");
   out.push("## Messages\n");
@@ -97,7 +98,7 @@ export function toHar(rec) {
       creator: { name: "ccglass", version: "0.1.0" },
       entries: [
         {
-          startedDateTime: new Date(rec.ts).toISOString(),
+          startedDateTime: localTimestamp(rec.ts),
           request: {
             method: rec.request?.method,
             url: rec.request?.url,

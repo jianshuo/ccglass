@@ -13,6 +13,7 @@ import {
   readEntryByIdMulti,
   hasCapturedLogs,
   parseEntryId,
+  localTimestamp,
 } from "../src/store.js";
 
 test("Store masks auth, persists, and reloads from disk", () => {
@@ -446,4 +447,19 @@ test("growing-prefix sessions store O(N) blobs, not O(N^2)", () => {
   // model would have stored ~N*(2N) message copies. Allow a small margin.
   const blobs = countBlobs(root);
   assert.ok(blobs <= 2 * N + 5, `expected ~${2 * N + 1} blobs, got ${blobs}`);
+});
+
+test("Store.sessionId uses local time format without Z suffix", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-localtime-"));
+  const store = new Store({ root });
+  // Format: YYYY-MM-DDTHH-MM-SS-MMM (no Z, no offset)
+  assert.match(store.sessionId, /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}$/);
+  assert.doesNotMatch(store.sessionId, /Z$/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("localTimestamp returns local time format without Z suffix", () => {
+  const ts = localTimestamp(1700000000000); // fixed epoch ms
+  assert.match(ts, /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}$/);
+  assert.doesNotMatch(ts, /Z$/);
 });

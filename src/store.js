@@ -16,13 +16,25 @@ const mask = (v) =>
 
 const pad = (n) => String(n).padStart(4, "0");
 
+function localSessionId() {
+  const d = new Date();
+  const p = (n, w) => String(n).padStart(w, "0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1,2)}-${p(d.getDate(),2)}T${p(d.getHours(),2)}-${p(d.getMinutes(),2)}-${p(d.getSeconds(),2)}-${p(d.getMilliseconds(),3)}`;
+}
+
+export function localTimestamp(ms) {
+  const d = ms ? new Date(ms) : new Date();
+  const p = (n, w) => String(n).padStart(w, "0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1,2)}-${p(d.getDate(),2)}T${p(d.getHours(),2)}-${p(d.getMinutes(),2)}-${p(d.getSeconds(),2)}-${p(d.getMilliseconds(),3)}`;
+}
+
 export class Store extends EventEmitter {
   constructor({ root, redact = true, format = "anthropic" }) {
     super();
     this.root = root;
     this.redact = redact;
     this.format = format;
-    this.sessionId = new Date().toISOString().replace(/[:.]/g, "-");
+    this.sessionId = localSessionId();
     this.sessionDir = path.join(root, this.sessionId);
     fs.mkdirSync(this.sessionDir, { recursive: true });
     this.entries = [];

@@ -10,7 +10,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { listSessionsMulti, loadSessionMulti, summarize, readEntryByIdMulti } from "./store.js";
+import { localTimestamp, listSessionsMulti, loadSessionMulti, summarize, readEntryByIdMulti } from "./store.js";
 import { getAdapter, detectFormat } from "./formats/index.js";
 import { globalRoot, readRoots } from "./paths.js";
 import { summarizeUsage } from "./usage.js";
@@ -121,7 +121,7 @@ server.registerTool(
     const { usage, cost } = priceOf(rec);
     return json({
       id: rec.id,
-      ts: new Date(rec.ts).toISOString(),
+      ts: localTimestamp(rec.ts),
       model: b.model,
       url: rec.request?.url,
       status: rec.response?.status ?? null,
