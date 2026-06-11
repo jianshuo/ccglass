@@ -228,6 +228,8 @@
 .live-pane .flowrow.tool_use .dot, .live-pane .flowrow.skill .dot { color: var(--accent); }
 .live-pane .flowrow.tool_result .dot { color: var(--muted); }
 .live-pane .flowrow.stop .dot { color: var(--muted); }
+.live-pane .flowrow.system .dot { color: var(--cache); }
+.live-pane .flowrow.tools .dot { color: var(--muted); }
 
 /* Highlight a freshly-arrived row (SSE) */
 @keyframes flash-in {

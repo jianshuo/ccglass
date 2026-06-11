@@ -502,6 +502,7 @@ function responseHtml(r) {
 const FLOW_ICON = {
   user: "▸", assistant: "✎", thinking: "✻",
   tool_use: "⚙", skill: "🧩", tool_result: "↳", stop: "■",
+  system: "▣", tools: "🛠",
 };
 
 function oneLine(t, n = 100) {
@@ -514,9 +515,25 @@ function skillName(text) {
   try { const o = JSON.parse(text); return o.skill || o.name || ""; } catch { return ""; }
 }
 
-function flowSteps(rec) {
+// `request: true` includes everything else the client sent — system prompt
+// blocks and the tools array — in prompt order (system → tools → messages),
+// so the live stream reflects the full request, not just the conversation.
+function flowSteps(rec, { request = false } = {}) {
   const parsed = rec.parsed || {};
   const steps = [];
+  if (request) {
+    for (const s of parsed.view?.system || []) {
+      steps.push({ kind: "system", label: s.label, text: s.text || "" });
+    }
+    const tools = parsed.view?.tools || [];
+    if (tools.length) {
+      steps.push({
+        kind: "tools",
+        count: tools.length,
+        text: tools.map((t) => t.name + (t.description ? " — " + oneLine(t.description, 120) : "")).join("\n"),
+      });
+    }
+  }
   for (const m of parsed.view?.messages || []) {
     if (m.type === "tool_use") {
       const isSkill = m.name === "Skill";
@@ -706,8 +723,11 @@ function scheduleUsageReload() {
 
 // ---- live stream view ----------------------------------------------------
 // Single-column timeline rendered into #detail. Walks every entry in the
-// current session in order, expands each via flowSteps(), dedups across
-// entries by callId/text-prefix, and merges each tool_use ↔ its tool_result
+// current session in order, expands each via flowSteps({request:true}) — which
+// includes EVERYTHING the client sent, in prompt order: system blocks, the
+// tools array, then messages — dedups across entries by callId/length+prefix
+// (so unchanged context shows once but any byte change re-emits the block),
+// and merges each tool_use ↔ its tool_result
 // into one row (body shows the OUTPUT; original input tucks into a nested
 // "show input" disclosure). SSE appends new steps to the live view without
 // re-rendering everything.
@@ -745,12 +765,16 @@ function smartSummary(step) {
     if (firstScalar != null) return oneLine(firstScalar, 140);
     return oneLine(step.text, 140);
   }
+  if (step.kind === "tools") return `${step.count} tools offered to the model`;
   return oneLine(step.text, 200);
 }
 
 function liveStepKey(s) {
   if (s.callId) return s.kind + "|" + s.callId;
-  return s.kind + "|" + (s.text || "").slice(0, 200);
+  // Length is part of the key so a block that changes anywhere (not just in
+  // its first 200 chars) re-appears in the stream instead of being deduped.
+  const t = String(s.text || "");
+  return s.kind + "|" + t.length + "|" + t.slice(0, 200);
 }
 
 // Tool name → category (file/shell/search/web/task/agent/plan/q&a/cron/notify/mcp)
@@ -1014,7 +1038,8 @@ function liveStepEl(step, { latestEntry = false } = {}) {
 
   const root = document.createElement(hasBody ? "details" : "div");
   root.className = "flowrow " + step.kind + (paired ? " paired" : "");
-  if (hasBody) root.open = step.kind !== "thinking"; // thinking starts collapsed
+  // thinking/system/tools start collapsed — bulky, repeated context
+  if (hasBody) root.open = !["thinking", "system", "tools"].includes(step.kind);
   if (step.callId) {
     root.style.setProperty("--hue", idHue(step.callId));
     root.dataset.callId = step.callId;
@@ -1041,7 +1066,9 @@ function liveStepEl(step, { latestEntry = false } = {}) {
     step.kind === "stop" ? `<span style="color:var(--muted)">stop_reason</span>` :
     step.kind === "thinking" ? `<span style="color:var(--muted)">thinking</span>` :
     step.kind === "user" ? `<b>user</b>` :
-    step.kind === "assistant" ? `<b>assistant</b>` : `<span style="color:var(--muted)">${esc(step.kind)}</span>`;
+    step.kind === "assistant" ? `<b>assistant</b>` :
+    step.kind === "system" ? `<b>system</b>` :
+    step.kind === "tools" ? `<b>tools</b>` : `<span style="color:var(--muted)">${esc(step.kind)}</span>`;
 
   const sumText = smartSummary(step);
   const summaryHtml = (step.kind !== "stop" && sumText) ? `<span class="summary">${esc(sumText)}</span>` : "";
@@ -1113,7 +1140,7 @@ function liveBodyEl() {
 function liveAppendEntry(rec, { flash = false } = {}) {
   const body = liveBodyEl();
   if (!body) return;
-  const steps = flowSteps(rec);
+  const steps = flowSteps(rec, { request: true });
   let appendedAny = false;
   for (const s of steps) {
     // tool_result: merge into existing tool_use row instead of new row
