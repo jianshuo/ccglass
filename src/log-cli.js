@@ -80,7 +80,9 @@ export function repack(opts) {
 // totals, top models by spend, and per-session breakdown. With `--format json`, emits
 // the raw aggregator output for piping into jq.
 export function usageCmd(opts) {
-  const s = summarizeUsage(opts.readRoots);
+  // Resolve session names only for the `--by-session` table (not --by-timestamp,
+  // which deliberately shows raw ids, and not the totals-only default view).
+  const s = summarizeUsage(opts.readRoots, { names: opts.bySession && !opts.byTimestamp });
 
   if (opts.format === "json") {
     process.stdout.write(JSON.stringify(s, null, 2) + "\n");
@@ -122,10 +124,24 @@ export function usageCmd(opts) {
   if (opts.bySession && s.bySession.length) {
     out.push("");
     out.push("by session (newest first):");
-    const w = Math.max(7, ...s.bySession.map((x) => x.session.length));
-    out.push(`  ${"session".padEnd(w)}  ${"req".padStart(6)}  ${"input".padStart(10)}  ${"output".padStart(10)}  ${"cacheR".padStart(10)}  ${"cacheW".padStart(10)}  ${"cost".padStart(10)}`);
+    // `--by-timestamp` shows only the raw timestamp id. Otherwise prepend a
+    // `name` column (the agent's session title) while keeping the timestamp id
+    // column, so sessions that share a title — e.g. ccglass restarted in the
+    // same Claude conversation — stay distinguishable and remain usable with
+    // `ccglass rm`/`export`. Cap names so a long first-prompt fallback can't
+    // blow out the column (the full name stays in --format json).
+    const showName = !opts.byTimestamp;
+    const cap = (str) => (str.length > 48 ? str.slice(0, 47) + "…" : str);
+    const nameOf = (x) => (x.name ? cap(x.name) : "—");
+    const wId = Math.max(7, ...s.bySession.map((x) => x.session.length));
+    const wName = showName ? Math.max(4, ...s.bySession.map((x) => nameOf(x).length)) : 0;
+    // Left columns vary by mode; the numeric tail is identical for header + rows.
+    const lead = (name, id) => (showName ? `${name.padEnd(wName)}  ${id.padEnd(wId)}` : id.padEnd(wId));
+    const tail = (req, input, output, cacheR, cacheW, cost) =>
+      `  ${req.padStart(6)}  ${input.padStart(10)}  ${output.padStart(10)}  ${cacheR.padStart(10)}  ${cacheW.padStart(10)}  ${cost.padStart(10)}`;
+    out.push(`  ${lead("name", "session")}${tail("req", "input", "output", "cacheR", "cacheW", "cost")}`);
     for (const x of s.bySession) {
-      out.push(`  ${x.session.padEnd(w)}  ${fmt(x.requests).padStart(6)}  ${fmt(x.input).padStart(10)}  ${fmt(x.output).padStart(10)}  ${fmt(x.cacheRead).padStart(10)}  ${fmt(x.cacheWrite).padStart(10)}  ${usd(x.usd).padStart(10)}`);
+      out.push(`  ${lead(nameOf(x), x.session)}${tail(fmt(x.requests), fmt(x.input), fmt(x.output), fmt(x.cacheRead), fmt(x.cacheWrite), usd(x.usd))}`);
     }
   }
 

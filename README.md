@@ -241,8 +241,15 @@ ccglass view                  # re-open the dashboard over saved logs (global + 
 ccglass migrate               # copy this project's ./.ccglass into the global store
 ccglass repack [session]      # force-migrate existing captures to content-addressed (v2) format
 ccglass rm <session>          # delete a session and reclaim its orphaned blobs
+ccglass usage [--by-session|--by-timestamp] [--format json]   # token + USD rollup; lists each session
 ccglass export <session>/<seq> --format raw|md|json|har   # e.g. 2026-05-25T12-00-00-000Z/0003
 ```
+
+With `--by-session`, each row is labelled by the agent's own session name when it
+can be recovered — Claude Code's `/rename` title, else its auto-generated title,
+else the first prompt — falling back to the capture timestamp otherwise. Use
+`--by-timestamp` to label rows by the raw capture-timestamp id instead (handy for
+`ccglass rm`/`export`, which take that id).
 
 ### Options
 

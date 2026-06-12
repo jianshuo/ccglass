@@ -42,7 +42,7 @@ USAGE
   ccglass migrate               Copy ./.ccglass logs (this project only) to the global store
   ccglass repack [session]      Re-pack stored captures into the deduped v2 format
   ccglass rm <session>          Delete a session and reclaim its orphaned blobs
-  ccglass usage [--by-session] [--format json] Summarize token usage and USD cost across every session
+  ccglass usage [--by-session|--by-timestamp] [--format json] Summarize token usage and USD cost across every session
   ccglass export <id> [--format raw|md|json|har]
 
 OPTIONS
@@ -100,6 +100,7 @@ function parseArgs(argv) {
     else if (a === "--env-var") opts.envVar = argv[++i];
     else if (a === "--format") opts.format = argv[++i];
     else if (a === "--by-session") opts.bySession = true;
+    else if (a === "--by-timestamp") { opts.bySession = true; opts.byTimestamp = true; }
     else rest.push(a);
   }
   return { opts, rest };

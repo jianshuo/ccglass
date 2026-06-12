@@ -104,6 +104,10 @@ test("summarizeUsage aggregates totals, byModel, bySession across roots", () => 
     assert.ok(session.usd > 0);
   }
 
+  // Name resolution is opt-in: the default rollup never scans transcripts, so
+  // every session's name stays null (the shape stays stable for JSON consumers).
+  for (const session of out.bySession) assert.equal(session.name, null);
+
   fs.rmSync(root, { recursive: true, force: true });
 });
 

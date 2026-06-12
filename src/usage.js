@@ -6,6 +6,7 @@
 
 import { listSessionsMulti, loadSessionMulti } from "./store.js";
 import { getAdapter, detectFormat } from "./formats/index.js";
+import { buildTranscriptIndex, resolveSessionName } from "./agent-sessions.js";
 
 function blankBucket() {
   return {
@@ -55,13 +56,24 @@ function costFor(rec) {
   return { cost: adapter.cost(model, usage), model };
 }
 
-export function summarizeUsage(roots) {
+// `names: true` resolves each session's human-readable title from the agent's
+// own transcripts (see agent-sessions.js). It's opt-in because it scans
+// ~/.claude/projects and parses a transcript per session — wasted work for
+// callers that only want totals/models (default `usage`, /api/usage,
+// MCP list_sessions, which all discard `name`). The CLI's `--by-session`
+// enables it.
+export function summarizeUsage(roots, { names = false } = {}) {
   const totals = blankBucket();
   const byModelMap = new Map();
   const bySession = [];
   let unmeasured = 0;
   let from = null;
   let to = null;
+
+  // Built once (only when names are requested): Claude Code transcript UUID →
+  // path. titleCache dedupes reads of a transcript several sessions resolve to.
+  const transcriptIndex = names ? buildTranscriptIndex() : null;
+  const titleCache = new Map();
 
   for (const session of listSessionsMulti(roots)) {
     const recs = loadSessionMulti(roots, session);
@@ -89,6 +101,7 @@ export function summarizeUsage(roots) {
 
     bySession.push({
       session,
+      name: names ? resolveSessionName(recs, transcriptIndex, titleCache) : null,
       entries: recs.length,
       from: sessionFrom ? new Date(sessionFrom).toISOString() : null,
       to: sessionTo ? new Date(sessionTo).toISOString() : null,
