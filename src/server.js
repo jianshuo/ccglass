@@ -39,7 +39,7 @@ export function createServer({ roots, store }) {
       if (p === "/api/sessions") return json(res, apiSessions(roots, store));
       if (p === "/api/requests") return json(res, apiRequests(roots, store, url));
       if (p === "/api/session-stats") return json(res, apiSessionStats(roots, store, url));
-      if (p === "/api/usage") return json(res, summarizeUsage(roots));
+      if (p === "/api/usage") return json(res, summarizeUsage(roots, { names: url.searchParams.get("names") === "1" }));
       if (p.startsWith("/api/request/")) return json(res, apiRequest(roots, store, decodeURIComponent(p.slice("/api/request/".length))));
       if (p === "/api/diff") return json(res, apiDiff(roots, store, url));
       if (p === "/api/export") return apiExport(roots, store, url, res);

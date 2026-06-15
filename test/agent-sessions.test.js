@@ -8,6 +8,7 @@ import {
   buildTranscriptIndex,
   titleFromTranscript,
   resolveSessionName,
+  defaultNameResolver,
 } from "../src/agent-sessions.js";
 
 function mkProjectsRoot() {
@@ -140,4 +141,14 @@ test("resolveSessionName returns null without linkage or transcript", () => {
   assert.equal(resolveSessionName([recWithSession("x")], index), null);
   assert.equal(resolveSessionName([{}], buildTranscriptIndex(root)), null);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("defaultNameResolver memoizes index + titleCache within its TTL", () => {
+  // Repeated rollups (the dashboard's debounced reloads) must reuse one scan and
+  // one shared title cache instead of re-reading ~/.claude/projects each time.
+  const a = defaultNameResolver();
+  const b = defaultNameResolver();
+  assert.strictEqual(a, b);
+  assert.ok(a.index instanceof Map);
+  assert.ok(a.titleCache instanceof Map);
 });

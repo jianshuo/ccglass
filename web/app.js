@@ -518,7 +518,7 @@ function skillName(text) {
 // `request: true` includes everything else the client sent — system prompt
 // blocks and the tools array — in prompt order (system → tools → messages),
 // so the live stream reflects the full request, not just the conversation.
-function flowSteps(rec, { request = false } = {}) {
+function flowSteps(rec, { request = false, requestMessages = true, requestToolResults = requestMessages } = {}) {
   const parsed = rec.parsed || {};
   const steps = [];
   if (request) {
@@ -534,20 +534,31 @@ function flowSteps(rec, { request = false } = {}) {
       });
     }
   }
-  for (const m of parsed.view?.messages || []) {
-    if (m.type === "tool_use") {
-      const isSkill = m.name === "Skill";
-      steps.push({ kind: isSkill ? "skill" : "tool_use", name: isSkill ? skillName(m.text) || "skill" : m.name, callId: m.callId, text: m.text });
-    } else if (m.type === "tool_result") {
-      steps.push({ kind: "tool_result", callId: m.callId, isError: m.isError, text: m.text });
-    } else if (m.type === "thinking") {
-      steps.push({ kind: "thinking", text: m.text });
-    } else {
-      steps.push({ kind: m.role === "assistant" ? "assistant" : "user", text: m.text });
+  if (requestMessages || requestToolResults) {
+    for (const m of parsed.view?.messages || []) {
+      if (m.type === "tool_result") {
+        // A tool_result is a tool/function OUTPUT (OpenAI function_call_output
+        // shows up on the *next* request), not prompt context — keep it even
+        // when the request side is suppressed (Codex) so it can merge into the
+        // prior turn's pending tool row and reveal the command output.
+        if (!requestToolResults) continue;
+        steps.push({ kind: "tool_result", callId: m.callId, isError: m.isError, text: m.text });
+        continue;
+      }
+      if (!requestMessages) continue;
+      if (m.type === "tool_use") {
+        const isSkill = m.name === "Skill";
+        steps.push({ kind: isSkill ? "skill" : "tool_use", name: isSkill ? skillName(m.text) || "skill" : m.name, callId: m.callId, text: m.text });
+      } else if (m.type === "thinking") {
+        steps.push({ kind: "thinking", text: m.text });
+      } else {
+        steps.push({ kind: m.role === "assistant" ? "assistant" : "user", text: m.text });
+      }
     }
   }
   // The reply to THIS request lives in the response, not yet in messages[].
   const r = parsed.response;
+  let emittedResponse = false;
   if (r && Array.isArray(r.content)) {
     for (const b of r.content) {
       if (b.type === "tool_use") {
@@ -558,8 +569,23 @@ function flowSteps(rec, { request = false } = {}) {
       } else {
         steps.push({ kind: "assistant", text: b.text ?? "", latest: true });
       }
+      emittedResponse = true;
     }
-    if (r.stop_reason) steps.push({ kind: "stop", text: r.stop_reason });
+    if (r.stop_reason) { steps.push({ kind: "stop", text: r.stop_reason }); emittedResponse = true; }
+  }
+  // A failed turn carries no content array (API error body, or a non-2xx with
+  // nothing to reassemble). Emit a terminal row so the turn stays visible —
+  // critical in the live view, where the request side may be suppressed (Codex)
+  // and the entry would otherwise disappear entirely.
+  if (!emittedResponse) {
+    const status = rec.response?.status;
+    const err = r?.error;
+    if (err || (status && status >= 400)) {
+      const msg = err?.message || err?.type || (typeof err === "string" ? err : "");
+      // callId keys this row per-turn so two turns that fail with the *same*
+      // error aren't deduped into one (which would re-hide the second failure).
+      steps.push({ kind: "stop", callId: "resp-error|" + (rec.id ?? rec.seq ?? ""), text: `error${status ? " " + status : ""}${msg ? ": " + oneLine(msg, 140) : ""}` });
+    }
   }
   return steps;
 }
@@ -638,7 +664,11 @@ const pct = (r) => Math.round((r || 0) * 100) + "%";
 async function loadUsage() {
   let next;
   try {
-    next = await api("/api/usage");
+    // Names require scanning the agent's transcripts, so only ask for them on
+    // the tab that shows them (by session). The default by-model and the
+    // by-timestamp tabs skip the scan entirely.
+    const q = state.summaryTab === "bySession" ? "?names=1" : "";
+    next = await api("/api/usage" + q);
   } catch (err) {
     next = { error: String(err?.message || err) };
   }
@@ -673,18 +703,28 @@ function renderSummary() {
     </div>
     <p style="color:var(--muted)">range: ${esc(range)}</p>`;
 
-  const subTabs = [["byModel", "by model"], ["bySession", "by session"]];
+  const subTabs = [["byModel", "by model"], ["bySession", "by session"], ["byTimestamp", "by timestamp"]];
   const tabsHtml = `<div class="tabs">` + subTabs.map(([id, label]) =>
     `<div class="tab${id === state.summaryTab ? " on" : ""}" data-stab="${id}">${label}</div>`
   ).join("") + `</div>`;
 
+  // by session: name + timestamp id; by timestamp: raw id only (mirrors the
+  // CLI's --by-session vs --by-timestamp).
   const body = state.summaryTab === "bySession"
     ? bySessionHtml(u.bySession)
-    : byModelHtml(u.byModel);
+    : state.summaryTab === "byTimestamp"
+      ? bySessionHtml(u.bySession, { showName: false })
+      : byModelHtml(u.byModel);
 
   d.innerHTML = `${tabsHtml}<div class="pane">${cardsHtml}<div class="summary-body">${body}</div></div>`;
   d.querySelectorAll(".tab[data-stab]").forEach((node) => {
-    node.onclick = () => { state.summaryTab = node.dataset.stab; renderSummary(); };
+    node.onclick = () => {
+      state.summaryTab = node.dataset.stab;
+      renderSummary();
+      // Names are fetched lazily; pull them when the user opens the by-session
+      // tab (other tabs render from the already-loaded rollup).
+      if (state.summaryTab === "bySession") loadUsage();
+    };
   });
 }
 
@@ -697,12 +737,14 @@ function byModelHtml(rows) {
   return `<table class="usage-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 
-function bySessionHtml(rows) {
+function bySessionHtml(rows, { showName = true } = {}) {
   if (!rows?.length) return `<p style="color:var(--muted)">no sessions</p>`;
-  const head = `<tr><th>session</th><th class="n">reqs</th><th class="n">input</th><th class="n">output</th><th class="n">cache hit</th><th class="n">cost</th></tr>`;
-  const body = rows.map((r) =>
-    `<tr><td>${esc(r.session)}</td><td class="n">${fmt(r.requests)}</td><td class="n">${fmt(r.input)}</td><td class="n">${fmt(r.output)}</td><td class="n">${pct(r.cacheHitRate)}</td><td class="n">${usd(r.usd)}</td></tr>`
-  ).join("");
+  const nameHead = showName ? `<th>name</th>` : "";
+  const head = `<tr>${nameHead}<th>session</th><th class="n">reqs</th><th class="n">input</th><th class="n">output</th><th class="n">cache hit</th><th class="n">cost</th></tr>`;
+  const body = rows.map((r) => {
+    const nameCell = showName ? `<td>${esc(r.name || "—")}</td>` : "";
+    return `<tr>${nameCell}<td>${esc(r.session)}</td><td class="n">${fmt(r.requests)}</td><td class="n">${fmt(r.input)}</td><td class="n">${fmt(r.output)}</td><td class="n">${pct(r.cacheHitRate)}</td><td class="n">${usd(r.usd)}</td></tr>`;
+  }).join("");
   return `<table class="usage-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 
@@ -722,15 +764,11 @@ function scheduleUsageReload() {
 }
 
 // ---- live stream view ----------------------------------------------------
-// Single-column timeline rendered into #detail. Walks every entry in the
-// current session in order, expands each via flowSteps({request:true}) — which
-// includes EVERYTHING the client sent, in prompt order: system blocks, the
-// tools array, then messages — dedups across entries by callId/length+prefix
-// (so unchanged context shows once but any byte change re-emits the block),
-// and merges each tool_use ↔ its tool_result
-// into one row (body shows the OUTPUT; original input tucks into a nested
-// "show input" disclosure). SSE appends new steps to the live view without
-// re-rendering everything.
+// Single-column timeline rendered into #detail. Non-Codex entries include the
+// client request in prompt order (system, tools, messages); Codex entries show
+// only the model response so the live pane does not echo the in-flight request.
+// Steps are deduped across entries by callId/length+prefix, and tool_use rows
+// merge with matching tool_result rows when both sides are present.
 
 function smartSummary(step) {
   if (step.kind === "tool_result") {
@@ -1137,10 +1175,31 @@ function liveBodyEl() {
   return $("#detail .live-pane .live-body");
 }
 
+function isCodexRecord(rec) {
+  const model = rec.parsed?.response?.model || rec.request?.body?.model || rec.model || "";
+  if (String(model).toLowerCase().includes("codex")) return true;
+  // Codex CLI (codex_cli_rs) stamps its own user-agent/originator. That client
+  // signature — not merely a /v1/responses URL — is what tells real Codex
+  // traffic apart from a generic OpenAI Responses client, so we don't suppress
+  // the latter's request side (prompt, tools, function-call outputs).
+  const h = rec.request?.headers || {};
+  const ua = String(h["user-agent"] || h.originator || "").toLowerCase();
+  return ua.includes("codex");
+}
+
+function liveFlowSteps(rec) {
+  const showRequest = !isCodexRecord(rec);
+  // For Codex, hide prompt/system/tool-call context but keep tool_result rows:
+  // the function_call_output arrives on the NEXT request and is what merges into
+  // the prior turn's pending tool row, so dropping it would leave that row stuck
+  // at "pending…" and hide the command/function output.
+  return flowSteps(rec, { request: showRequest, requestMessages: showRequest, requestToolResults: true });
+}
+
 function liveAppendEntry(rec, { flash = false } = {}) {
   const body = liveBodyEl();
   if (!body) return;
-  const steps = flowSteps(rec, { request: true });
+  const steps = liveFlowSteps(rec);
   let appendedAny = false;
   for (const s of steps) {
     // tool_result: merge into existing tool_use row instead of new row
