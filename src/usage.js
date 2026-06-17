@@ -6,7 +6,7 @@
 
 import { listSessionsMulti, loadSessionMulti } from "./store.js";
 import { getAdapter, detectFormat } from "./formats/index.js";
-import { buildTranscriptIndex, resolveSessionName } from "./agent-sessions.js";
+import { resolveSessionName, defaultNameResolver } from "./agent-sessions.js";
 
 function blankBucket() {
   return {
@@ -59,9 +59,10 @@ function costFor(rec) {
 // `names: true` resolves each session's human-readable title from the agent's
 // own transcripts (see agent-sessions.js). It's opt-in because it scans
 // ~/.claude/projects and parses a transcript per session — wasted work for
-// callers that only want totals/models (default `usage`, /api/usage,
-// MCP list_sessions, which all discard `name`). The CLI's `--by-session`
-// enables it.
+// callers that only want totals/models (default `usage`, MCP list_sessions,
+// which discard `name`). The CLI's `--by-session` enables it; the web dashboard
+// passes `?names=1` only for its by-session tab. A short-lived shared memo
+// (defaultNameResolver) keeps repeated rollups cheap.
 export function summarizeUsage(roots, { names = false } = {}) {
   const totals = blankBucket();
   const byModelMap = new Map();
@@ -70,10 +71,10 @@ export function summarizeUsage(roots, { names = false } = {}) {
   let from = null;
   let to = null;
 
-  // Built once (only when names are requested): Claude Code transcript UUID →
-  // path. titleCache dedupes reads of a transcript several sessions resolve to.
-  const transcriptIndex = names ? buildTranscriptIndex() : null;
-  const titleCache = new Map();
+  // Only when names are requested: a short-lived shared memo of the transcript
+  // index + parsed titles, so repeated rollups (the dashboard's debounced
+  // Summary reloads) don't re-scan ~/.claude/projects or re-read transcripts.
+  const resolver = names ? defaultNameResolver() : null;
 
   for (const session of listSessionsMulti(roots)) {
     const recs = loadSessionMulti(roots, session);
@@ -101,7 +102,7 @@ export function summarizeUsage(roots, { names = false } = {}) {
 
     bySession.push({
       session,
-      name: names ? resolveSessionName(recs, transcriptIndex, titleCache) : null,
+      name: resolver ? resolveSessionName(recs, resolver.index, resolver.titleCache) : null,
       entries: recs.length,
       from: sessionFrom ? new Date(sessionFrom).toISOString() : null,
       to: sessionTo ? new Date(sessionTo).toISOString() : null,

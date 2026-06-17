@@ -161,3 +161,25 @@ export function resolveSessionName(records, index, cache) {
   if (cache) cache.set(file, title);
   return title;
 }
+
+// Short-lived memo of the default-root scan + parsed titles. The dashboard's
+// Summary view reloads /api/usage on a 500ms debounce during a live session;
+// without this each reload would re-readdir all of ~/.claude/projects and
+// re-read each (multi-MB) transcript. Callers that pass an explicit projects
+// root (tests, one-off CLI runs) bypass the memo entirely.
+const NAME_MEMO_TTL_MS = 5000;
+let nameMemo = null;
+
+/**
+ * Cached `{ index, titleCache }` for the default projects root, rebuilt at most
+ * once per TTL window. Reuse across `resolveSessionName` calls in and across
+ * rollups. A freshly `/rename`d title may lag by up to the TTL — fine for a
+ * live dashboard; the CLI builds a fresh index per invocation.
+ */
+export function defaultNameResolver() {
+  const now = Date.now();
+  if (!nameMemo || now - nameMemo.at >= NAME_MEMO_TTL_MS) {
+    nameMemo = { at: now, index: buildTranscriptIndex(), titleCache: new Map() };
+  }
+  return nameMemo;
+}
