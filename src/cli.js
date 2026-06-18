@@ -343,6 +343,19 @@ async function wrap(command, args, opts) {
   args = proxyArgs(args, provider.envVar, proxyUrl, process.env, upstream);
 
   process.stderr.write(banner(dashUrl, provider, upstream));
+  // OpenCode reads its upstream from opencode.json, not OPENAI_BASE_URL. Even
+  // though ccglass injects OPENAI_BASE_URL into the child process, OpenCode
+  // ignores it when a provider baseURL is set in its config. Warn early so
+  // users know to point their opencode.json at the proxy.
+  if (provider.command === "opencode") {
+    process.stderr.write(
+      `  \x1b[33m⚠\x1b[0m  OpenCode reads baseURL from opencode.json, not OPENAI_BASE_URL.\n` +
+      `     To capture traffic, set your provider's baseURL in opencode.json to:\n` +
+      `       \x1b[1m${proxyUrl}\x1b[0m\n` +
+      `     Then restart OpenCode through ccglass.\n` +
+      `     Tip: use --proxy-port <n> to pin the proxy port so opencode.json stays stable.\n\n`
+    );
+  }
   if (codexChatGPTInfo) {
     const ep = codexChatGPTInfo.endpoint ? ` (${codexChatGPTInfo.endpoint})` : "";
     process.stderr.write(
