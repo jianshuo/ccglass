@@ -63,6 +63,7 @@ pinning.
 | `dsnix` | Reasonix (`dsnix` alias) | `DEEPSEEK_BASE_URL` | api.deepseek.com | OpenAI Chat |
 | `kimi` | Claude Code → Moonshot | `ANTHROPIC_BASE_URL` | api.moonshot.ai/anthropic | Anthropic Messages |
 | `opencode` | OpenCode | `OPENAI_BASE_URL` | auto (from env) | OpenAI Chat |
+| `qoder` | Qoder | `OPENAI_BASE_URL` | auto (from env) | OpenAI Chat |
 | `ollama` | any Ollama-backed client | `OPENAI_BASE_URL` | 127.0.0.1:11434 | OpenAI Chat |
 | `lmstudio` | any LM Studio-backed client | `OPENAI_BASE_URL` | 127.0.0.1:1234 | OpenAI Chat |
 | `openrouter` | any OpenRouter-backed client | `OPENAI_BASE_URL` | openrouter.ai/api | OpenAI Chat |
@@ -79,6 +80,7 @@ pinning.
 - **DeepSeek-TUI** — OpenAI-compatible Chat Completions; set `DEEPSEEK_API_KEY`.
 - **Reasonix** — OpenAI-compatible Chat Completions; set `DEEPSEEK_API_KEY`.
 - **OpenCode** — auto-detects upstream from `OPENAI_BASE_URL`; set it before running. Use `--env-var` if your OpenCode provider uses a different env var name.
+- **Qoder** — OpenAI-compatible; pass `--upstream <url>` to point at your Qoder endpoint (e.g. `ccglass qoder --upstream https://your-qoder-endpoint.com`).
 - **Ollama / LM Studio** — no key needed for local models; pass `--upstream` if your server runs on a non-default address.
 - **OpenRouter** — set `OPENAI_API_KEY` to your OpenRouter key.
 - **GLM/Zhipu** — set `OPENAI_BASE_URL` to your Zhipu endpoint (e.g. `https://open.bigmodel.cn/api/paas/v4`) and `OPENAI_API_KEY` to your Zhipu key.

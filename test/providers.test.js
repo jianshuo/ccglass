@@ -156,6 +156,30 @@ test("opencode is available in the interactive picker", () => {
   assert.ok(PICKABLE.includes("opencode"));
 });
 
+test("qoder provider uses OPENAI_BASE_URL with autoUpstream", () => {
+  const provider = resolveProvider("qoder");
+
+  assert.equal(provider.label, "Qoder");
+  assert.equal(provider.command, "qoder");
+  assert.equal(provider.format, "openai");
+  assert.equal(provider.envVar, "OPENAI_BASE_URL");
+  assert.equal(provider.upstream, "auto");
+  assert.equal(provider.autoUpstream, true);
+});
+
+test("qoder is available in the interactive picker", () => {
+  assert.ok(PICKABLE.includes("qoder"));
+});
+
+test("qoder can be used as a run provider override", () => {
+  const provider = resolveProvider("custom-agent", "qoder");
+
+  assert.equal(provider.command, "custom-agent");
+  assert.equal(provider.format, "openai");
+  assert.equal(provider.envVar, "OPENAI_BASE_URL");
+  assert.equal(provider.autoUpstream, true);
+});
+
 test("codex-azure provider uses AZURE_OPENAI_ENDPOINT with autoUpstream", () => {
   const provider = resolveProvider("codex-azure");
 
