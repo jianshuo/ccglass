@@ -84,6 +84,16 @@ export const PROVIDERS = {
     autoUpstream: true,
     noSettings: true,       // OpenCode doesn't use --settings flag like Claude Code
   },
+  qoder: {
+    label: "Qoder",
+    command: "qoder",
+    format: "openai",
+    envVar: "OPENAI_BASE_URL",
+    upstream: "auto",
+    autoUpstream: true,
+    noSettings: true,
+    note: "Qoder is OpenAI-compatible. Set OPENAI_BASE_URL to your Qoder endpoint and pass --upstream <url> to override.",
+  },
   glm: {
     label: "GLM / Zhipu AI",
     command: null,
@@ -151,7 +161,7 @@ export const PROVIDERS = {
   },
 };
 
-export const PICKABLE = ["claude", "codex", "deepseek", "reasonix", "kimi", "opencode", "codebuddy"]; // shown in the no-arg picker
+export const PICKABLE = ["claude", "codex", "deepseek", "reasonix", "kimi", "opencode", "qoder", "codebuddy"]; // shown in the no-arg picker
 
 // Resolve a provider from a CLI token (e.g. "claude"), falling back to a custom
 // command wrapped under an explicit --provider.
