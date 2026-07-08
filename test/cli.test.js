@@ -89,6 +89,28 @@ test("--version flag prints version and exits 0", async () => {
   assert.match(stdout, /^\d+\.\d+\.\d+/);
 });
 
+// `ccglass proxy` starts the reverse proxy + dashboard WITHOUT spawning any
+// client. Regression: previously `proxy` was treated as a provider name and
+// ccglass tried to spawn a binary called "proxy", exiting with
+// "command not found: proxy". It must not spawn anything.
+test("proxy subcommand does not spawn a client (no 'command not found')", async () => {
+  // glm is an autoUpstream provider with no static default, and OPENAI_BASE_URL
+  // is empty → it must exit 1 with a clear "needs an upstream URL" error, NOT
+  // try to spawn a client. run() does `{ ...process.env, ...env }`, so use an
+  // empty-string override to actually clear OPENAI_BASE_URL for the child
+  // (same trick the bedrock test uses).
+  const { code, stderr } = await run(
+    ["proxy", "--provider", "glm"],
+    { OPENAI_BASE_URL: "" }
+  );
+
+  assert.equal(code, 1);
+  assert.match(stderr, /upstream URL/);
+  assert.match(stderr, /OPENAI_BASE_URL|--upstream/);
+  // The key regression assertion: it must never have tried to spawn a client.
+  assert.doesNotMatch(stderr, /command not found/);
+});
+
 test("ccglass rm deletes a session directory", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccglass-rmcli-"));
   const session = "2020-01-01T00-00-00-000Z";

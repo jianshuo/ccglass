@@ -38,6 +38,7 @@ USAGE
   ccglass opencode [args...]    Inspect OpenCode
   ccglass codebuddy             Inspect CodeBuddy (forward-proxy mode)
   ccglass run [--provider P] -- <cmd...>   Inspect any client
+  ccglass proxy [--provider P] Start the proxy + dashboard only (no client spawned)
   ccglass view                  Open the dashboard over saved logs
   ccglass migrate               Copy ./.ccglass logs (this project only) to the global store
   ccglass repack [session]      Re-pack stored captures into the deduped v2 format
@@ -476,6 +477,73 @@ async function wrapForward(provider, opts) {
   for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, shutdown);
 }
 
+// Resolve the upstream for proxy-only mode. Only the bits that matter when we
+// don't spawn a child: explicit --upstream wins; otherwise fall back to the
+// provider's static upstream, or (for autoUpstream providers) the value of the
+// provider's env var already in the environment.
+function resolveProxyOnlyUpstream(provider, opts) {
+  if (opts.upstream) return { url: opts.upstream, src: "--upstream" };
+  if (provider.upstream && provider.upstream !== "auto") {
+    return { url: provider.upstream, src: provider.note ? null : "provider default" };
+  }
+  if (provider.autoUpstream && process.env[provider.envVar]) {
+    return { url: process.env[provider.envVar], src: provider.envVar };
+  }
+  return { url: null, src: null };
+}
+
+// `ccglass proxy` — start the reverse proxy + dashboard WITHOUT spawning any
+// client. Point your IDE / tool's API base URL at the printed proxy address.
+async function wrapProxyOnly(provider, opts) {
+  maybeLegacyHint(process.cwd(), opts.dir);
+
+  const { url: upstream, src } = resolveProxyOnlyUpstream(provider, opts);
+  if (!upstream) {
+    process.stderr.write(
+      `ccglass proxy: ${provider.label} needs an upstream URL.\n` +
+      `  Set ${provider.envVar} in your environment, or pass --upstream <url>.\n`
+    );
+    process.exit(1);
+  }
+  try {
+    const parsed = new URL(upstream);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("bad protocol");
+  } catch {
+    process.stderr.write(
+      `ccglass proxy: invalid upstream URL: "${upstream}"\n` +
+      `  Must start with http:// or https://, e.g. https://api.openai.com\n`
+    );
+    process.exit(1);
+  }
+
+  const store = new Store({ root: opts.dir, redact: opts.redact, format: provider.format });
+  const proxy = createProxy({ upstream, store });
+  const dashboard = createServer({ roots: opts.readRoots, store });
+
+  const proxyPort = await listen(proxy, opts.proxyPort);
+  const dashPort = await listen(dashboard, opts.port);
+  const dashUrl = `http://127.0.0.1:${dashPort}`;
+  const proxyUrl = `http://127.0.0.1:${proxyPort}`;
+
+  process.stderr.write(
+    `\n  \x1b[36m●\x1b[0m ccglass proxy → ${upstream}` +
+    (src ? `   \x1b[2m(${src})\x1b[0m` : "") +
+    `\n    proxy:     \x1b[1m${proxyUrl}\x1b[0m` +
+    `\n    dashboard: \x1b[1m${dashUrl}\x1b[0m` +
+    `\n` +
+    `\n    Set your tool's API base URL (${provider.envVar}) to: \x1b[1m${proxyUrl}\x1b[0m` +
+    `\n    Point your IDE / client there, then watch every request in the dashboard.` +
+    `\n` +
+    (provider.note ? `\n    \x1b[33mnote:\x1b[0m ${provider.note}\n` : "") +
+    `\n    Press Ctrl-C to stop.\n\n`
+  );
+
+  if (opts.open) openBrowser(dashUrl);
+
+  const shutdown = () => { proxy.close(); dashboard.close(); process.exit(0); };
+  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, shutdown);
+}
+
 async function view(opts) {
   const hasAny = opts.readRoots.some((r) => fs.existsSync(r));
   if (!hasAny) {
@@ -509,6 +577,17 @@ export async function main(argv) {
   if (cmd === "rm") return rmCmd(rest[1], opts);
   if (cmd === "usage") return usageCmd(opts);
   if (cmd === "export") return exportEntry(rest[1], opts);
+  if (cmd === "proxy") {
+    const name = opts.provider || "openai";
+    const provider = resolveProvider(name, opts.provider, opts.envVar);
+    if (provider.mode === "forward-proxy") {
+      process.stderr.write(
+        `ccglass proxy: "${name}" is a forward-proxy provider; use \`ccglass ${name}\` instead.\n`
+      );
+      process.exit(1);
+    }
+    return wrapProxyOnly(provider, opts);
+  }
   if (cmd === "run") {
     const dashIdx = rest.indexOf("--");
     const cmdArgs = dashIdx >= 0 ? rest.slice(dashIdx + 1) : rest.slice(1);
