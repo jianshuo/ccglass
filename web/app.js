@@ -527,10 +527,13 @@ function flowSteps(rec, { request = false, requestMessages = true, requestToolRe
     }
     const tools = parsed.view?.tools || [];
     if (tools.length) {
+      const list = tools.map((t) => ({ name: t.name, description: String(t.description || "").trim() }));
       steps.push({
         kind: "tools",
         count: tools.length,
-        text: tools.map((t) => t.name + (t.description ? " — " + oneLine(t.description, 120) : "")).join("\n"),
+        tools: list, // rendered by liveStepEl
+        // `text` isn't displayed but feeds liveStepKey and the hasBody check.
+        text: list.map((t) => t.name + (t.description ? "\n" + t.description : "")).join("\n\n"),
       });
     }
   }
@@ -1118,8 +1121,19 @@ function liveStepEl(step, { latestEntry = false } = {}) {
     `<span class="lead">${titleHtml}${summaryHtml}${inlineHtml}${tags.join("")}${toggleHtml}</span>`;
 
   if (hasBody) {
-    root.innerHTML = `<summary>${headHtml}</summary><pre class="body input-body">${esc(step.text || "")}</pre>`;
-    if (step.kind === "tool_use" || step.kind === "skill") root.dataset.input = step.text || "";
+    const bodyHtml =
+      step.kind === "tools" && step.tools
+        ? // name label + description per tool, split by <hr> so it reads as UI chrome rather than part of the request text.
+          `<div class="body input-body tools-body">${
+            step.tools.map((t) =>
+              `<div class="tool-name">${esc(t.name)}</div>` +
+              esc(t.description)
+            ).join("<hr>")
+          }</div>`
+        : `<pre class="body input-body">${esc(step.text || "")}</pre>`;
+    root.innerHTML = `<summary>${headHtml}</summary>${bodyHtml}`;
+    if (step.kind === "tool_use" || step.kind === "skill")
+      root.dataset.input = step.text || "";
   } else {
     root.innerHTML = headHtml;
   }

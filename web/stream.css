@@ -219,6 +219,14 @@
 }
 
 .live-pane .flowrow > .body.input-body { opacity: 0.85; }
+
+/* Tools row: one section per tool, split by a rule */
+.live-pane .flowrow > .tools-body .tool-name { font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+.live-pane .flowrow > .tools-body hr {
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--muted) 45%, transparent);
+  margin: 12px 0;
+}
 .live-pane .flowrow > .body.output-body { opacity: 1; }
 
 /* per-kind tint of the dot */
